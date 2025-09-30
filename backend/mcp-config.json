@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "fuse-home-backend": {
+      "command": "python",
+      "args": ["main.py"],
+      "cwd": "/Users/joe_codes/dev/fuse-home/backend",
+      "env": {
+        "GEMINI_API_KEY": "your-gemini-api-key-here"
+      }
+    }
+  }
+}
