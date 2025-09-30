@@ -318,7 +318,7 @@ async def get_pubmed_capabilities() -> Dict[str, Any]:
         ],
         "date_types": ["publication_date", "modification_date", "entrez_date"],
         "sort_options": ["relevance", "pub_date", "author", "journal_name"],
-        "max_results": 10000,
+        "max_results": 100,
         "example_searches": [
             "diabetes treatment",
             "COVID-19[title] AND vaccine",

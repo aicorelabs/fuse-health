@@ -1,27 +1,39 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import {
   Edit3,
+  Loader2,
   MessageCircle,
   Search,
   ServerCog,
   Share2,
 } from "lucide-react";
+import { useChatMutation, useExecutePlanMutation } from "@/lib/api";
+import type { ChatMessage, ChatRequestPayload } from "@/lib/api";
 
 type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
-  variant?: "card";
-  heading?: string;
-  tag?: string;
-  chips?: string[];
+  variant?: "plan";
+  planState?: "ready" | "executing" | "completed" | "cancelled";
+  error?: string;
 };
+
+type PendingPlan = {
+  request: ChatRequestPayload;
+  messageId: string;
+};
+
+const makeId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const quickFilters = [
   {
@@ -37,49 +49,6 @@ const quickFilters = [
     className: "border-purple-500/30 bg-purple-500/15 text-purple-100",
   },
 ];
-
-const analysisCardContent = `lululemon demonstrated total sales revenue of $151.1 million between July 25, 2025, and August 24, 2025, with weekly sales peaking at $39.5 million in the week of July 27, 2025. The company maintained a largely stable pricing strategy for its core offerings, supporting consistent revenue generation in key product categories like Bottoms. However, recent weeks have shown a 13.5% decline in sales revenue from the week of August 10 to August 17.
-
-Recent Sales Performance and Product Trends
-lululemon's weekly sales revenue experienced fluctuations, with the highest performance in the week of July 27, 2025, reaching $39.5 million from 558.7k units sold. Following this, weekly sales saw a slight dip to $38.2 million by August 3, before recovering to $39.4 million in the week of August 10. However, the week of August 17 marked a significant decrease of 13.5% in sales revenue, dropping to $34.1 million, despite a 1.4% increase in total inventory to 30.2 million units. The Bottoms category consistently dominates revenue contribution, accounting for over 50% of weekly sales throughout the analyzed period, reaching 53.2% in the week of August 10, with $14.6 million in sales. Tops and Outerwear maintained their positions as the second and third highest revenue generators, respectively, with Outerwear showing robust performance.`;
-
-const analysisSummary = `lululemon demonstrated total sales revenue of $151.1 million between July 25, 2025, and August 24, 2025, with weekly sales peaking at $39.5 million in the week of July 27, 2025. The company maintained a largely stable pricing strategy for its core offerings, supporting consistent revenue generation in key product categories like Bottoms. However, recent weeks have shown a 13.5% decline in sales revenue from the week of August 10 to August 17.
-
-Recent Sales Performance and Product Trends
-lululemon's weekly sales revenue experienced fluctuations, with the highest performance in the week of July 27, 2025, reaching $39.5 million from 558.7k units sold. Following this, weekly sales saw a slight dip to $38.2 million by August 3, before recovering to $39.4 million in the week of August 10. However, the week of August 17 marked a significant decrease of 13.5% in sales revenue, dropping to $34.1 million, despite a 1.4% increase in total inventory to 30.2 million units. The Bottoms category consistently dominates revenue contribution, accounting for over 50% of weekly sales throughout the analyzed period, reaching 53.2% in the week of August 10, with $14.6 million in sales. Tops and Outerwear maintained their positions as the second and third highest revenue generators, respectively, with Outerwear showing robust performance.`;
-
-function createInitialMessages(prompt: string): Message[] {
-  const uid = Date.now().toString();
-  return [
-    { id: `user-${uid}`, role: "user", content: prompt },
-    {
-      id: `assistant-card-${uid}`,
-      role: "assistant",
-      variant: "card",
-      heading: "46s • Researching...",
-      tag: "STEP 7/7",
-      chips: ["Data sources", "Internet", "Search"],
-      content: analysisCardContent,
-    },
-    {
-      id: `assistant-${uid}`,
-      role: "assistant",
-      content: analysisSummary,
-    },
-  ];
-}
-
-function createFollowUpMessages(prompt: string): Message[] {
-  const uid = Date.now().toString();
-  return [
-    { id: `user-follow-${uid}`, role: "user", content: prompt },
-    {
-      id: `assistant-follow-${uid}`,
-      role: "assistant",
-      content: `I'll look into "${prompt}" and refresh the analysis with the latest metrics. Check back shortly for new insights.`,
-    },
-  ];
-}
 
 function QuickFiltersRow({
   compact = false,
@@ -121,22 +90,180 @@ export default function MCPChatPage() {
   const [query, setQuery] = useState("");
   const [followUp, setFollowUp] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [history, setHistory] = useState<ChatMessage[]>([]);
+  const historyRef = useRef<ChatMessage[]>([]);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const [pendingPlan, setPendingPlan] = useState<PendingPlan | null>(null);
+
+  const chatMutation = useChatMutation();
+  const executePlanMutation = useExecutePlanMutation();
+
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
+  useEffect(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  const addAssistantMessage = (content: string) => {
+  const id = `assistant-${makeId()}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id,
+        role: "assistant",
+        content,
+      },
+    ]);
+    setHistory((prev) => {
+      const updated = [...prev, { role: "assistant", content }];
+      historyRef.current = updated;
+      return updated;
+    });
+  };
+
+  const isBusy = chatMutation.isPending || executePlanMutation.isPending;
+
+  const submitPrompt = async (prompt: string) => {
+    const trimmed = prompt.trim();
+    if (!trimmed || isBusy) return;
+
+    if (pendingPlan) {
+      const { messageId } = pendingPlan;
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, planState: "cancelled" } : msg,
+        ),
+      );
+      setPendingPlan(null);
+    }
+
+    const historySnapshot = historyRef.current;
+    const userMessage: Message = {
+  id: `user-${makeId()}`,
+      role: "user",
+      content: trimmed,
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+
+    const updatedHistory = [...historySnapshot, { role: "user", content: trimmed }];
+    historyRef.current = updatedHistory;
+    setHistory(updatedHistory);
+
+    setView("chat");
+  setPendingPlan(null);
+
+    const request: ChatRequestPayload = {
+      message: trimmed,
+      history: historySnapshot,
+    };
+
+    try {
+      const response = await chatMutation.mutateAsync(request);
+      if (response.is_plan) {
+  const planId = `plan-${makeId()}`;
+        setPendingPlan({ request, messageId: planId });
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: planId,
+            role: "assistant",
+            content: response.response,
+            variant: "plan",
+            planState: "ready",
+          },
+        ]);
+      } else {
+        addAssistantMessage(response.response);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Something went wrong while contacting the agent.";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `error-${makeId()}`,
+          role: "assistant",
+          content: message,
+        },
+      ]);
+    }
+  };
+
+  const handleExecutePlan = async () => {
+    if (!pendingPlan) return;
+
+    const { messageId, request } = pendingPlan;
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === messageId
+          ? { ...msg, planState: "executing", error: undefined }
+          : msg,
+      ),
+    );
+
+    try {
+      const result = await executePlanMutation.mutateAsync(request);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? { ...msg, planState: "completed" }
+            : msg,
+        ),
+      );
+      addAssistantMessage(result.response);
+      setPendingPlan(null);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to execute the approved plan.";
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? { ...msg, planState: "ready", error: message }
+            : msg,
+        ),
+      );
+    }
+  };
+
+  const handleCancelPlan = () => {
+    if (!pendingPlan) return;
+
+    const { messageId } = pendingPlan;
+    setPendingPlan(null);
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === messageId
+          ? { ...msg, planState: "cancelled" }
+          : msg,
+      ),
+    );
+  };
 
   const handleIntroSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (isBusy) return;
     const trimmed = query.trim();
     if (!trimmed) return;
-    setMessages(createInitialMessages(trimmed));
-    setView("chat");
     setQuery("");
+    submitPrompt(trimmed).catch(() => {
+      // errors handled within submitPrompt
+    });
   };
 
   const handleFollowUpSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  event.preventDefault();
+  if (isBusy) return;
     const trimmed = followUp.trim();
     if (!trimmed) return;
-    setMessages((prev) => [...prev, ...createFollowUpMessages(trimmed)]);
     setFollowUp("");
+    submitPrompt(trimmed).catch(() => {
+      // errors handled within submitPrompt
+    });
   };
 
   const firstUserMessage = messages.find((message) => message.role === "user");
@@ -185,69 +312,128 @@ export default function MCPChatPage() {
           <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-6 py-8">
             <div className="flex-1 overflow-hidden rounded-3xl">
               <div className="flex h-full flex-col">
-                <div className="flex-1 space-y-6 overflow-y-auto px-6 py-8">
-              {messages.map((message) => {
-                if (message.role === "assistant" && message.variant === "card") {
-                  return (
-                    <Card
-                      key={message.id}
-                      className="border-white/15 !bg-white/[0.05] text-white"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3 text-xs text-white/60">
-                        <span>{message.heading}</span>
-                        {message.tag && (
-                          <span className="rounded-full border border-white/15 px-3 py-1 text-[10px] uppercase tracking-[0.25em] text-white/50">
-                            {message.tag}
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-4 space-y-4 text-sm leading-relaxed text-white/80">
-                        {message.content.split("\n\n").map((paragraph, index) => (
-                          <p key={index}>{paragraph}</p>
-                        ))}
-                      </div>
-                      {message.chips && (
-                        <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-white/55">
-                          {message.chips.map((chip) => (
-                            <span
-                              key={chip}
-                              className="rounded-full border border-white/15 px-3 py-1"
-                            >
-                              {chip}
-                            </span>
-                            ))}
-                        </div>
-                      )}
-                    </Card>
-                  );
-                }
-                if (message.role === "assistant") {
-                  return (
-                    <div key={message.id} className="space-y-3 text-sm leading-relaxed text-white/75">
-                      {message.content.split("\n\n").map((paragraph, index) => (
-                        <p key={index}>{paragraph}</p>
-                      ))}
+                <div
+                  ref={messagesContainerRef}
+                  className="flex-1 space-y-6 overflow-y-auto px-6 py-8"
+                >
+                  {messages.length === 0 ? (
+                    <div className="flex h-full items-center justify-center text-sm text-white/60">
+                      Ask a question to start the conversation.
                     </div>
-                  );
-                }
-                return (
-                  <div key={message.id} className="flex justify-end">
-                    <span className="max-w-[70%] rounded-2xl bg-white px-4 py-2 text-sm font-medium text-[#0A0B14] shadow-sm">
-                      {message.content}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-                <form onSubmit={handleFollowUpSubmit} className="px-6 py-4 fixed bottom-0 w-full max-w-5xl bg-[#0A0B14]/80 backdrop-blur-md">
+                  ) : (
+                    messages.map((message) => {
+                      if (message.role === "assistant" && message.variant === "plan") {
+                        const isActivePlan = pendingPlan?.messageId === message.id;
+                        const isExecuting = message.planState === "executing";
+                        const isCompleted = message.planState === "completed";
+                        const isCancelled = message.planState === "cancelled";
+
+                        return (
+                          <Card
+                            key={message.id}
+                            className="border-white/15 bg-white/[0.04] text-white"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-[0.2em] text-white/50">
+                              <span>Plan Proposed</span>
+                              <span>
+                                {isExecuting
+                                  ? "Executing"
+                                  : isCompleted
+                                    ? "Completed"
+                                    : isCancelled
+                                      ? "Cancelled"
+                                      : "Waiting approval"}
+                              </span>
+                            </div>
+                            <div className="mt-4 space-y-4 text-sm leading-relaxed text-white/80">
+                              {message.content.split("\n\n").map((paragraph, index) => (
+                                <p key={index}>{paragraph}</p>
+                              ))}
+                            </div>
+                            {message.error ? (
+                              <p className="mt-4 text-sm text-rose-300/80">
+                                {message.error}
+                              </p>
+                            ) : null}
+                            <div className="mt-5 flex flex-wrap gap-3">
+                              {isActivePlan && !isCompleted && !isCancelled ? (
+                                <>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    className="gap-2"
+                                    onClick={handleExecutePlan}
+                                    disabled={isExecuting || isBusy}
+                                  >
+                                    {isExecuting ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : null}
+                                    Execute plan
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-white/20 text-white/80 hover:border-white/40"
+                                    onClick={handleCancelPlan}
+                                    disabled={isExecuting || isBusy}
+                                  >
+                                    Dismiss
+                                  </Button>
+                                </>
+                              ) : isCompleted ? (
+                                <span className="text-xs uppercase tracking-[0.2em] text-emerald-300/80">
+                                  Plan executed successfully
+                                </span>
+                              ) : null}
+                            </div>
+                          </Card>
+                        );
+                      }
+
+                      if (message.role === "assistant") {
+                        return (
+                          <div
+                            key={message.id}
+                            className="space-y-3 text-sm leading-relaxed text-white/75"
+                          >
+                            {message.content.split("\n\n").map((paragraph, index) => (
+                              <p key={index}>{paragraph}</p>
+                            ))}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={message.id} className="flex justify-end">
+                          <span className="max-w-[70%] rounded-2xl bg-white px-4 py-2 text-sm font-medium text-[#0A0B14] shadow-sm">
+                            {message.content}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+                <form
+                  onSubmit={handleFollowUpSubmit}
+                  className="border-t border-white/10 px-6 py-4 backdrop-blur-md"
+                >
                   <div className="flex gap-3">
                     <Input
                       value={followUp}
                       onChange={(event) => setFollowUp(event.target.value)}
                       placeholder="Ask a follow-up question..."
                       className="h-11 border-white/15 bg-transparent text-sm text-white"
+                      disabled={isBusy}
                     />
-                    <Button type="submit" className="h-11 px-6">
+                    <Button
+                      type="submit"
+                      className="h-11 px-6"
+                      disabled={isBusy}
+                    >
+                      {chatMutation.isPending ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : null}
                       Send
                     </Button>
                   </div>
@@ -279,9 +465,13 @@ export default function MCPChatPage() {
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Ask about eligibility checks, prior auth escalations, workflows..."
                   className="h-12 border-none px-0 text-base text-white focus-visible:ring-0"
+                  disabled={isBusy}
                 />
               </div>
-              <Button type="submit" className="h-12 rounded-full px-6">
+              <Button type="submit" className="h-12 rounded-full px-6" disabled={isBusy}>
+                {isBusy ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
                 Send
               </Button>
             </form>

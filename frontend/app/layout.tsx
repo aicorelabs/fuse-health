@@ -3,6 +3,7 @@ import { Inter, Manrope } from "next/font/google";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
+import { AppProviders } from "./providers";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -28,21 +29,23 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen antialiased text-white overflow-x-hidden">
-        <div
-          className="fixed top-0 w-full h-screen bg-cover bg-center -z-10"
-          style={{
-            backgroundImage: "url('/placeholder.svg?height=1080&width=1920')",
-          }}
-        ></div>
-        <div
-          className="fixed inset-0 opacity-20"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.05) 1px, transparent 0)",
-            backgroundSize: "24px 24px",
-          }}
-        ></div>
-        <div className="relative z-10 min-h-screen">{children}</div>
+        <AppProviders>
+          <div
+            className="fixed top-0 w-full h-screen bg-cover bg-center -z-10"
+            style={{
+              backgroundImage: "url('/placeholder.svg?height=1080&width=1920')",
+            }}
+          ></div>
+          <div
+            className="fixed inset-0 opacity-20"
+            style={{
+              backgroundImage:
+                "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.05) 1px, transparent 0)",
+              backgroundSize: "24px 24px",
+            }}
+          ></div>
+          <div className="relative z-10 min-h-screen">{children}</div>
+        </AppProviders>
       </body>
     </html>
   );

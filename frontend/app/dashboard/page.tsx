@@ -6,6 +6,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { McpServerOverviewCard } from "@/components/dashboard/McpServerOverviewCard";
 
 const metrics = [
 	{
@@ -140,6 +141,20 @@ export default function DashboardPage() {
 							)
 						)}
 					</CardContent>
+				</Card>
+			</section>
+
+			<section className="grid gap-6 lg:grid-cols-2">
+				<McpServerOverviewCard />
+				<Card className="border-dashed border-white/15 bg-transparent">
+					<CardHeader>
+						<CardTitle>API Architecture Status</CardTitle>
+						<CardDescription>
+							React Query is installed and typed MCP endpoints are ready for integration across the
+							workspace. Wire dashboard widgets or workflows to these hooks to hydrate with live backend
+							data.
+						</CardDescription>
+					</CardHeader>
 				</Card>
 			</section>
 		</div>
