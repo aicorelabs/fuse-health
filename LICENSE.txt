@@ -1,0 +1,28 @@
+Copyright © [2025] [Fuse | Jonathan Atiene]
+
+All rights reserved.
+
+This software is licensed, not sold. By using this software, you agree to the following terms:
+
+1. **Non-Commercial Use Only**  
+   You may use this software solely for personal, educational, or internal evaluation purposes.  
+   Commercial use of any kind — including but not limited to resale, white-labeling, integration into paid services, or use in a business or organization — is strictly prohibited.
+
+2. **No Redistribution**  
+   You may not distribute, sublicense, share, rent, lease, or otherwise make this software available to any third party, in whole or in part, whether modified or unmodified.
+
+3. **No Modification or Removal of Branding**  
+   You may not remove, modify, obscure, or alter any logos, trademarks, copyright notices, or branding elements included in the software or its output.  
+   Attribution to the original author(s) must remain intact in all forms.
+
+4. **No Warranty**  
+   This software is provided "as is", without warranty of any kind, express or implied.  
+   In no event shall the author or copyright holder be liable for any claim, damages, or other liability arising from the use of this software.
+
+5. **Termination**  
+   Any violation of these terms will result in the immediate termination of your rights under this license.
+
+---
+
+For permission or licensing inquiries (e.g., commercial licensing), contact:  
+bemijonathan[-@-]gmail[.][com]
