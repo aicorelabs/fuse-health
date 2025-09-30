@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""
-Main entry point for the Fuse Home Backend MCP Server
-"""
+"""Main entry point for the Fuse Home Backend MCP Server."""
 
-from src.servers.pubmed_server import pubmed_server
+from src.servers import epic_server, pubmed_server
 from fastmcp.client.sampling import SamplingMessage, SamplingParams, RequestContext
 from fastmcp.server.elicitation import AcceptedElicitation
 from dataclasses import dataclass
@@ -40,8 +38,10 @@ async def setup_server():
 
     # Import servers with prefixes to avoid conflicts
     await main_server.import_server(pubmed_server, prefix="pubmed")
+    await main_server.import_server(epic_server, prefix="epic")
 
-    logger.info("Server composition complete with medical research capabilities")
+    logger.info(
+        "Server composition complete with medical research and clinical capabilities")
 
 
 @main_server.tool
@@ -60,18 +60,32 @@ async def server_overview(context: Context) -> Dict[str, Any]:
                     "pubmed_search_abstracts",
                     "pubmed_get_article_details",
                     "pubmed_search_by_author",
+                    "pubmed_search_recent_articles",
                     "pubmed_get_pubmed_capabilities",
                 ],
                 "prompts": ["pubmed_pubmed_research_prompt"],
                 "resources": [],
-            }
+            },
+            "epic": {
+                "name": "EpicServer",
+                "description": "Epic FHIR access for clinical workflows",
+                "tools": [
+                    "epic_get_patient_summary",
+                    "epic_search_patients",
+                    "epic_get_patient_appointments",
+                    "epic_get_patient_medications",
+                    "epic_get_epic_capabilities",
+                ],
+                "prompts": ["epic_epic_clinical_assistant_prompt"],
+                "resources": [],
+            },
         },
         "integration": {
             "gemini_ready": bool(os.getenv("GEMINI_API_KEY") and
                                  os.getenv("GEMINI_API_KEY") != "your-gemini-api-key-here"),
             "total_tools": 10,
-            "total_resources": 4,
-            "total_prompts": 1
+            "total_resources": 0,
+            "total_prompts": 2
         }
     }
 
