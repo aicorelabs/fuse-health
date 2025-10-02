@@ -1,0 +1,99 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  chats     Chat[]
+  mcpConfigurations UserMcpConfiguration[]
+
+  @@map("users")
+}
+
+model Chat {
+  id        String   @id @default(cuid())
+  title     String?
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@map("chats")
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  role      String   // "user" or "assistant"
+  content   String
+  chatId    String
+  createdAt DateTime @default(now())
+
+  // Relations
+  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+enum McpConfigurationStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+  DRAFT
+}
+
+model McpServerDefinition {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  displayName  String
+  description  String?
+  category     String?
+  isManaged    Boolean  @default(true)
+  configSchema Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  configurations UserMcpConfiguration[]
+
+  @@map("mcp_server_definitions")
+}
+
+model UserMcpConfiguration {
+  id               String                 @id @default(cuid())
+  userId           String
+  serverId         String
+  displayName      String
+  status           McpConfigurationStatus @default(DRAFT)
+  configValues     Json
+  metadata         Json?
+  lastStatusChange DateTime?              @map("last_status_change")
+  lastStatusMessage String?               @map("last_status_message")
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  // Relations
+  user   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  server McpServerDefinition @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, serverId, displayName], name: "user_server_display_name_unique")
+  @@index([userId])
+  @@index([serverId])
+  @@map("user_mcp_configurations")
+}
