@@ -1,27 +1,30 @@
 "use client";
 
 import type { CSSProperties, MouseEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addEdge,
   applyEdgeChanges,
   applyNodeChanges,
   Background,
-  Handle,
-  Controls,
-  MiniMap,
-  Position,
-  ReactFlow,
   type Connection,
+  Controls,
   type Edge,
   type EdgeChange,
   type EdgeProps,
+  getBezierPath,
+  Handle,
+  MiniMap,
   type Node,
   type NodeChange,
   type OnConnect,
   type OnEdgesChange,
   type OnNodesChange,
-  getBezierPath,
+  Position,
+  ReactFlow,
+  type ReactFlowInstance,
+  ReactFlowProvider,
+  useReactFlow,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import type { LucideIcon } from "lucide-react";
@@ -37,11 +40,11 @@ import {
   FileText,
   Filter,
   GitBranch,
-  Repeat,
   Mail,
   MessageSquare,
   Play,
   Plus,
+  Repeat,
   Save,
   Settings,
   Sparkles,
@@ -51,7 +54,13 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -151,12 +160,277 @@ interface FlowDefinition {
   edges: FlowEdge[];
 }
 
+interface NodeTemplate {
+  id: string;
+  label: string;
+  subtitle: string;
+  category: "trigger" | "data" | "logic" | "ai" | "action";
+  accent: keyof typeof accentStyles;
+  icon: LucideIcon;
+  chipText: string;
+  description: string;
+  defaultConfig: Record<string, string>;
+  configFields: NodeConfigField[];
+}
+
+const nodeTemplates: NodeTemplate[] = [
+  {
+    id: "schedule",
+    label: "Schedule Trigger",
+    subtitle: "Time-based",
+    category: "trigger",
+    accent: "violet",
+    icon: Clock3,
+    chipText: "Trigger",
+    description: "Run workflow on a schedule",
+    defaultConfig: {
+      cadence: "Daily",
+      time: "09:00 AM",
+    },
+    configFields: [
+      {
+        id: "cadence",
+        label: "Cadence",
+        type: "text",
+        required: true,
+        placeholder: "Daily",
+      },
+      { id: "time", label: "Time", type: "text", placeholder: "09:00 AM" },
+    ],
+  },
+  {
+    id: "event-trigger",
+    label: "Event Trigger",
+    subtitle: "Epic/EHR event",
+    category: "trigger",
+    accent: "blue",
+    icon: Database,
+    chipText: "Trigger",
+    description: "Start on EHR data event",
+    defaultConfig: {
+      event: "Observation.create",
+    },
+    configFields: [
+      { id: "event", label: "Event Type", type: "text", required: true },
+      { id: "facility", label: "Facility", type: "text" },
+    ],
+  },
+  {
+    id: "google-sheets",
+    label: "Google Sheets",
+    subtitle: "Read/write rows",
+    category: "data",
+    accent: "green",
+    icon: Table,
+    chipText: "Data",
+    description: "Fetch or update spreadsheet data",
+    defaultConfig: {
+      sheetUrl: "",
+      worksheet: "Sheet1",
+      range: "A:Z",
+    },
+    configFields: [
+      {
+        id: "sheetUrl",
+        label: "Sheet URL",
+        type: "text",
+        required: true,
+        placeholder: "https://docs.google.com/...",
+      },
+      { id: "worksheet", label: "Worksheet", type: "text" },
+      { id: "range", label: "Range", type: "text" },
+    ],
+  },
+  {
+    id: "filter",
+    label: "Filter/Branch",
+    subtitle: "Conditional logic",
+    category: "logic",
+    accent: "aqua",
+    icon: Filter,
+    chipText: "Logic",
+    description: "Route based on conditions",
+    defaultConfig: {
+      expression: "",
+    },
+    configFields: [
+      {
+        id: "expression",
+        label: "Condition",
+        type: "text",
+        required: true,
+        placeholder: "value > 100",
+      },
+    ],
+  },
+  {
+    id: "loop",
+    label: "Loop Iterator",
+    subtitle: "For each item",
+    category: "logic",
+    accent: "aqua",
+    icon: Repeat,
+    chipText: "Logic",
+    description: "Iterate over collection",
+    defaultConfig: {
+      iterator: "items",
+      concurrency: "Sequential",
+    },
+    configFields: [
+      { id: "iterator", label: "Iterator", type: "text", placeholder: "items" },
+      {
+        id: "concurrency",
+        label: "Concurrency",
+        type: "text",
+        placeholder: "Sequential",
+      },
+    ],
+  },
+  {
+    id: "text-ai",
+    label: "Text AI",
+    subtitle: "GPT/Claude",
+    category: "ai",
+    accent: "pink",
+    icon: Sparkles,
+    chipText: "AI Agent",
+    description: "Generate text with LLM",
+    defaultConfig: {
+      prompt: "",
+      temperature: "0.7",
+    },
+    configFields: [
+      {
+        id: "prompt",
+        label: "Prompt",
+        type: "textarea",
+        required: true,
+        placeholder: "Write instructions...",
+      },
+      {
+        id: "temperature",
+        label: "Temperature",
+        type: "text",
+        placeholder: "0.7",
+      },
+    ],
+  },
+  {
+    id: "ai-assistant",
+    label: "AI Assistant",
+    subtitle: "Multi-step agent",
+    category: "ai",
+    accent: "violet",
+    icon: Bot,
+    chipText: "AI Agent",
+    description: "Run autonomous AI agent",
+    defaultConfig: {
+      instructions: "",
+    },
+    configFields: [
+      {
+        id: "instructions",
+        label: "Instructions",
+        type: "textarea",
+        required: true,
+        placeholder: "Describe the agent's task...",
+      },
+    ],
+  },
+  {
+    id: "gmail",
+    label: "Gmail",
+    subtitle: "Send email",
+    category: "action",
+    accent: "red",
+    icon: Mail,
+    chipText: "Action",
+    description: "Send emails via Gmail",
+    defaultConfig: {
+      to: "",
+      subject: "",
+      body: "",
+    },
+    configFields: [
+      {
+        id: "to",
+        label: "To",
+        type: "email",
+        required: true,
+        placeholder: "recipient@example.com",
+      },
+      { id: "subject", label: "Subject", type: "text", required: true },
+      {
+        id: "body",
+        label: "Body",
+        type: "textarea",
+        placeholder: "Email content...",
+      },
+    ],
+  },
+  {
+    id: "notification",
+    label: "Send Notification",
+    subtitle: "SMS/PagerDuty",
+    category: "action",
+    accent: "pink",
+    icon: MessageSquare,
+    chipText: "Action",
+    description: "Alert via SMS or pager",
+    defaultConfig: {
+      channel: "SMS",
+      message: "",
+    },
+    configFields: [
+      { id: "channel", label: "Channel", type: "text", required: true },
+      {
+        id: "message",
+        label: "Message",
+        type: "textarea",
+        required: true,
+        placeholder: "Alert message...",
+      },
+    ],
+  },
+  {
+    id: "epic-write",
+    label: "Write to Epic",
+    subtitle: "Update EHR",
+    category: "action",
+    accent: "blue",
+    icon: FileText,
+    chipText: "Action",
+    description: "Create/update Epic record",
+    defaultConfig: {
+      resource: "",
+      data: "",
+    },
+    configFields: [
+      {
+        id: "resource",
+        label: "Resource Type",
+        type: "text",
+        required: true,
+        placeholder: "Observation",
+      },
+      {
+        id: "data",
+        label: "Data",
+        type: "textarea",
+        required: true,
+        placeholder: "JSON payload...",
+      },
+    ],
+  },
+];
+
 const initialFlows: FlowDefinition[] = [
   {
     id: "flow-upsell",
     name: "Automate Sending Upsell Offers",
     category: "Care navigation",
-    summary: "Review weekly patient cohorts, craft contextual upsell messaging, and deliver through Gmail.",
+    summary:
+      "Review weekly patient cohorts, craft contextual upsell messaging, and deliver through Gmail.",
     cadence: "Every week on Monday 08:00",
     status: "draft",
     lastDeployed: "Never",
@@ -164,7 +438,7 @@ const initialFlows: FlowDefinition[] = [
       {
         id: "schedule",
         type: "step",
-        position: { x: 420, y: 80 },
+        position: { x: 50, y: 250 },
         data: {
           label: "Every Week",
           subtitle: "Schedule",
@@ -175,8 +449,7 @@ const initialFlows: FlowDefinition[] = [
             {
               id: "schedule-out",
               type: "source",
-              position: Position.Bottom,
-              label: "Next step",
+              position: Position.Right,
             },
           ],
           config: {
@@ -185,16 +458,27 @@ const initialFlows: FlowDefinition[] = [
             time: "08:00 AM",
           },
           configFields: [
-            { id: "cadence", label: "Cadence", type: "text", required: true, placeholder: "Weekly" },
+            {
+              id: "cadence",
+              label: "Cadence",
+              type: "text",
+              required: true,
+              placeholder: "Weekly",
+            },
             { id: "day", label: "Day", type: "text", placeholder: "Monday" },
-            { id: "time", label: "Time", type: "text", placeholder: "08:00 AM" },
+            {
+              id: "time",
+              label: "Time",
+              type: "text",
+              placeholder: "08:00 AM",
+            },
           ],
         },
       },
       {
         id: "sheet",
         type: "step",
-        position: { x: 420, y: 200 },
+        position: { x: 300, y: 250 },
         data: {
           label: "Get next row(s)",
           subtitle: "Google Sheets",
@@ -206,14 +490,12 @@ const initialFlows: FlowDefinition[] = [
             {
               id: "sheet-in",
               type: "target",
-              position: Position.Top,
-              label: "Schedule",
+              position: Position.Left,
             },
             {
               id: "sheet-out",
               type: "source",
-              position: Position.Bottom,
-              label: "Rows",
+              position: Position.Right,
             },
           ],
           config: {
@@ -247,7 +529,7 @@ const initialFlows: FlowDefinition[] = [
       {
         id: "loop",
         type: "step",
-        position: { x: 420, y: 320 },
+        position: { x: 550, y: 250 },
         data: {
           label: "Loop on Items",
           subtitle: "For each patient",
@@ -258,22 +540,18 @@ const initialFlows: FlowDefinition[] = [
             {
               id: "loop-in",
               type: "target",
-              position: Position.Top,
-              label: "Rows",
+              position: Position.Left,
             },
             {
               id: "loop-iterate",
               type: "source",
-              position: Position.Right,
-              label: "Each item",
-              style: { top: "38%" },
-              labelPlacement: "after",
+              position: Position.Bottom,
+              style: { left: "50%" },
             },
             {
               id: "loop-complete",
               type: "source",
-              position: Position.Bottom,
-              label: "After loop",
+              position: Position.Right,
             },
           ],
           config: {
@@ -299,7 +577,7 @@ const initialFlows: FlowDefinition[] = [
       {
         id: "ai",
         type: "step",
-        position: { x: 640, y: 420 },
+        position: { x: 550, y: 420 },
         data: {
           label: "Ask AI",
           subtitle: "Text AI",
@@ -311,15 +589,13 @@ const initialFlows: FlowDefinition[] = [
             {
               id: "ai-in",
               type: "target",
-              position: Position.Left,
-              label: "Item",
-              style: { top: "45%" },
+              position: Position.Top,
+              style: { left: "50%" },
             },
             {
               id: "ai-out",
               type: "source",
-              position: Position.Bottom,
-              label: "Draft",
+              position: Position.Right,
             },
           ],
           config: {
@@ -347,7 +623,7 @@ const initialFlows: FlowDefinition[] = [
       {
         id: "email",
         type: "step",
-        position: { x: 420, y: 500 },
+        position: { x: 800, y: 250 },
         data: {
           label: "Send Email",
           subtitle: "Gmail",
@@ -361,20 +637,17 @@ const initialFlows: FlowDefinition[] = [
               id: "email-in-loop",
               type: "target",
               position: Position.Left,
-              label: "Recipient",
-              style: { top: "62%" },
+              style: { top: "50%" },
             },
             {
               id: "email-in-content",
               type: "target",
-              position: Position.Top,
-              label: "Content",
+              position: Position.Bottom,
             },
             {
               id: "email-out",
               type: "source",
-              position: Position.Bottom,
-              label: "Send",
+              position: Position.Right,
             },
           ],
           config: {
@@ -392,7 +665,12 @@ const initialFlows: FlowDefinition[] = [
               required: true,
               placeholder: "Select Gmail connection",
             },
-            { id: "to", label: "Receiver Email (To)", type: "email", required: true },
+            {
+              id: "to",
+              label: "Receiver Email (To)",
+              type: "email",
+              required: true,
+            },
             { id: "cc", label: "CC Email", type: "multi" },
             { id: "bcc", label: "BCC Email", type: "multi" },
             { id: "subject", label: "Subject", type: "text", required: true },
@@ -447,7 +725,8 @@ const initialFlows: FlowDefinition[] = [
     id: "flow-critical-labs",
     name: "Escalate Critical Lab Results",
     category: "Clinical safety",
-    summary: "Detect critical lab values, alert the covering provider, and document the intervention.",
+    summary:
+      "Detect critical lab values, alert the covering provider, and document the intervention.",
     cadence: "Runs continuously on lab events",
     status: "published",
     lastDeployed: "2025-08-24 11:14",
@@ -455,7 +734,7 @@ const initialFlows: FlowDefinition[] = [
       {
         id: "trigger-lab",
         type: "step",
-        position: { x: 420, y: 80 },
+        position: { x: 50, y: 250 },
         data: {
           label: "On Lab Result",
           subtitle: "Epic event",
@@ -466,8 +745,7 @@ const initialFlows: FlowDefinition[] = [
             {
               id: "trigger-lab-out",
               type: "source",
-              position: Position.Bottom,
-              label: "Result",
+              position: Position.Right,
             },
           ],
           config: {
@@ -483,7 +761,7 @@ const initialFlows: FlowDefinition[] = [
       {
         id: "filter-critical",
         type: "step",
-        position: { x: 420, y: 200 },
+        position: { x: 300, y: 250 },
         data: {
           label: "Filter critical values",
           subtitle: "Threshold > limit",
@@ -494,22 +772,20 @@ const initialFlows: FlowDefinition[] = [
             {
               id: "filter-in",
               type: "target",
-              position: Position.Top,
-              label: "Lab result",
+              position: Position.Left,
             },
             {
               id: "filter-true",
               type: "source",
               position: Position.Right,
-              label: "Critical",
-              style: { top: "42%" },
+              style: { top: "50%" },
             },
             {
               id: "filter-false",
               type: "source",
-              position: Position.Left,
+              position: Position.Top,
               label: "Else",
-              style: { top: "62%" },
+              style: { left: "50%" },
             },
           ],
           config: {
@@ -528,7 +804,7 @@ const initialFlows: FlowDefinition[] = [
       {
         id: "notify",
         type: "step",
-        position: { x: 420, y: 320 },
+        position: { x: 550, y: 250 },
         data: {
           label: "Notify covering provider",
           subtitle: "PagerDuty + SMS",
@@ -539,14 +815,12 @@ const initialFlows: FlowDefinition[] = [
             {
               id: "notify-in",
               type: "target",
-              position: Position.Top,
-              label: "Critical",
+              position: Position.Left,
             },
             {
               id: "notify-out",
               type: "source",
-              position: Position.Bottom,
-              label: "Alert",
+              position: Position.Right,
             },
           ],
           config: {
@@ -562,7 +836,7 @@ const initialFlows: FlowDefinition[] = [
       {
         id: "ai-note",
         type: "step",
-        position: { x: 420, y: 440 },
+        position: { x: 800, y: 250 },
         data: {
           label: "Draft clinical note",
           subtitle: "AI summarization",
@@ -573,14 +847,12 @@ const initialFlows: FlowDefinition[] = [
             {
               id: "ai-note-in",
               type: "target",
-              position: Position.Top,
-              label: "Alert",
+              position: Position.Left,
             },
             {
               id: "ai-note-out",
               type: "source",
-              position: Position.Bottom,
-              label: "Draft",
+              position: Position.Right,
             },
           ],
           config: {
@@ -594,7 +866,7 @@ const initialFlows: FlowDefinition[] = [
       {
         id: "file",
         type: "step",
-        position: { x: 420, y: 560 },
+        position: { x: 1050, y: 250 },
         data: {
           label: "Attach to chart",
           subtitle: "Epic SmartDoc",
@@ -606,14 +878,12 @@ const initialFlows: FlowDefinition[] = [
             {
               id: "file-in",
               type: "target",
-              position: Position.Top,
-              label: "Summary",
+              position: Position.Left,
             },
             {
               id: "file-out",
               type: "source",
-              position: Position.Bottom,
-              label: "Chart",
+              position: Position.Right,
             },
           ],
           config: {
@@ -689,10 +959,26 @@ function cloneFlow(flow: FlowDefinition): FlowStateValue {
 const CONNECTOR_OFFSET = 14;
 
 const connectorBaseStyle: Record<Position, CSSProperties> = {
-  [Position.Top]: { top: -CONNECTOR_OFFSET, left: "50%", transform: "translate(-50%, 0)" },
-  [Position.Bottom]: { bottom: -CONNECTOR_OFFSET, left: "50%", transform: "translate(-50%, 0)" },
-  [Position.Left]: { left: -CONNECTOR_OFFSET, top: "50%", transform: "translate(0, -50%)" },
-  [Position.Right]: { right: -CONNECTOR_OFFSET, top: "50%", transform: "translate(0, -50%)" },
+  [Position.Top]: {
+    top: -CONNECTOR_OFFSET,
+    left: "50%",
+    transform: "translate(-50%, 0)",
+  },
+  [Position.Bottom]: {
+    bottom: -CONNECTOR_OFFSET,
+    left: "50%",
+    transform: "translate(-50%, 0)",
+  },
+  [Position.Left]: {
+    left: -CONNECTOR_OFFSET,
+    top: "50%",
+    transform: "translate(0, -50%)",
+  },
+  [Position.Right]: {
+    right: -CONNECTOR_OFFSET,
+    top: "50%",
+    transform: "translate(0, -50%)",
+  },
 };
 
 const defaultConnectorLabelPlacement: Record<Position, "before" | "after"> = {
@@ -702,21 +988,36 @@ const defaultConnectorLabelPlacement: Record<Position, "before" | "after"> = {
   [Position.Right]: "after",
 };
 
-const StepNode = ({ id, data }: { id: string; data: StepNodeData }) => {
+const StepNode = (
+  { id, data, selected }: {
+    id: string;
+    data: StepNodeData;
+    selected?: boolean;
+  },
+) => {
   const Icon = data.icon;
   const accent = accentStyles[data.accent];
   const connectors = data.connectors && data.connectors.length > 0
     ? data.connectors
     : ([
-        { id: `${id}-in`, type: "target", position: Position.Top },
-        { id: `${id}-out`, type: "source", position: Position.Bottom },
-      ] satisfies NodeConnector[]);
+      { id: `${id}-in`, type: "target", position: Position.Left },
+      { id: `${id}-out`, type: "source", position: Position.Right },
+    ] satisfies NodeConnector[]);
 
   return (
-    <div className="relative group rounded-2xl border border-white/12 bg-[#121527] px-4 py-3 shadow-lg shadow-black/30 transition-all duration-300">
+    <div
+      className={cn(
+        "relative group rounded-2xl border px-4 py-3 shadow-lg shadow-black/30 transition-all duration-300",
+        selected
+          ? "border-emerald-500 ring-2 ring-emerald-500/30"
+          : "border-white/12",
+      )}
+    >
       {connectors.map((connector) => {
-        const placement = connector.labelPlacement ?? defaultConnectorLabelPlacement[connector.position];
-        const isHorizontal = connector.position === Position.Left || connector.position === Position.Right;
+        const placement = connector.labelPlacement ??
+          defaultConnectorLabelPlacement[connector.position];
+        const isHorizontal = connector.position === Position.Left ||
+          connector.position === Position.Right;
         const wrapperStyle: CSSProperties = {
           ...connectorBaseStyle[connector.position],
           ...(connector.style ?? {}),
@@ -728,14 +1029,16 @@ const StepNode = ({ id, data }: { id: string; data: StepNodeData }) => {
             style={wrapperStyle}
             className={cn(
               "absolute z-10 flex items-center",
-              isHorizontal ? "gap-2" : "flex-col items-center gap-1"
+              isHorizontal ? "gap-2" : "flex-col items-center gap-1",
             )}
           >
-            {placement === "before" && connector.label ? (
-              <span className="pointer-events-none rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/60">
-                {connector.label}
-              </span>
-            ) : null}
+            {placement === "before" && connector.label
+              ? (
+                <span className="pointer-events-none rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                  {connector.label}
+                </span>
+              )
+              : null}
             <Handle
               id={connector.id}
               type={connector.type}
@@ -743,49 +1046,62 @@ const StepNode = ({ id, data }: { id: string; data: StepNodeData }) => {
               style={{ position: "static" }}
               className="h-3 w-3 rounded-full border border-[#7C8DB5] bg-white shadow-[0_0_0_2px_rgba(12,16,28,0.95)]"
             />
-            {placement === "after" && connector.label ? (
-              <span className="pointer-events-none rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/60">
-                {connector.label}
-              </span>
-            ) : null}
+            {placement === "after" && connector.label
+              ? (
+                <span className="pointer-events-none rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                  {connector.label}
+                </span>
+              )
+              : null}
           </div>
         );
       })}
 
       <div className="flex items-start gap-3">
-        <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl", accent.icon)}>
+        <div
+          className={cn(
+            "flex h-10 w-10 items-center justify-center rounded-xl",
+            accent.icon,
+          )}
+        >
           <Icon className="h-5 w-5" />
         </div>
         <div className="min-w-[160px] flex-1">
           <div className="flex items-center gap-2">
             <p className="text-sm font-semibold text-white">{data.label}</p>
-            {data.chipText ? (
-              <span
-                className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                  accent.chip
-                )}
-              >
-                {data.chipText}
-              </span>
-            ) : null}
+            {data.chipText
+              ? (
+                <span
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                    accent.chip,
+                  )}
+                >
+                  {data.chipText}
+                </span>
+              )
+              : null}
           </div>
           <p className="text-xs text-white/60">{data.subtitle}</p>
-          {data.helperText ? (
-            <p className="mt-2 text-xs text-white/40">{data.helperText}</p>
-          ) : null}
-          {data.status === "attention" ? (
-            <div className="mt-2 flex items-center gap-1 text-xs text-amber-300">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              Requires configuration
-            </div>
-          ) : null}
-          {data.status === "complete" ? (
-            <div className="mt-2 flex items-center gap-1 text-xs text-emerald-300">
-              <CheckCircle className="h-3.5 w-3.5" />
-              Ready for publish
-            </div>
-          ) : null}
+          {data.helperText
+            ? <p className="mt-2 text-xs text-white/40">{data.helperText}</p>
+            : null}
+          {data.status === "attention"
+            ? (
+              <div className="mt-2 flex items-center gap-1 text-xs text-amber-300">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Requires configuration
+              </div>
+            )
+            : null}
+          {data.status === "complete"
+            ? (
+              <div className="mt-2 flex items-center gap-1 text-xs text-emerald-300">
+                <CheckCircle className="h-3.5 w-3.5" />
+                Ready for publish
+              </div>
+            )
+            : null}
         </div>
       </div>
     </div>
@@ -879,14 +1195,24 @@ const minimapNodeColor = (node: FlowNode) => {
 };
 
 export default function WorkflowsPage() {
+  return (
+    <ReactFlowProvider>
+      <WorkflowsPageContent />
+    </ReactFlowProvider>
+  );
+}
+
+function WorkflowsPageContent() {
+  const { setCenter } = useReactFlow();
   const [activeFlowId, setActiveFlowId] = useState(initialFlows[0]?.id ?? "");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  const [flowState, setFlowState] = useState<Record<string, FlowStateValue>>(() =>
-    initialFlows.reduce((memo, flow) => {
-      memo[flow.id] = cloneFlow(flow);
-      return memo;
-    }, {} as Record<string, FlowStateValue>)
+  const [flowState, setFlowState] = useState<Record<string, FlowStateValue>>(
+    () =>
+      initialFlows.reduce((memo, flow) => {
+        memo[flow.id] = cloneFlow(flow);
+        return memo;
+      }, {} as Record<string, FlowStateValue>),
   );
 
   const [simulationState, setSimulationState] = useState<{
@@ -897,7 +1223,7 @@ export default function WorkflowsPage() {
 
   const activeFlowDefinition = useMemo(
     () => initialFlows.find((flow) => flow.id === activeFlowId),
-    [activeFlowId]
+    [activeFlowId],
   );
 
   const activeState = flowState[activeFlowId];
@@ -921,12 +1247,18 @@ export default function WorkflowsPage() {
         const edge = current.edges.find((item) => item.id === edgeId);
         if (!edge) return prev;
 
-        const sourceNode = current.nodes.find((node) => node.id === edge.source);
-        const targetNode = current.nodes.find((node) => node.id === edge.target);
+        const sourceNode = current.nodes.find((node) =>
+          node.id === edge.source
+        );
+        const targetNode = current.nodes.find((node) =>
+          node.id === edge.target
+        );
         if (!sourceNode || !targetNode) return prev;
 
-        const midpointX = sourceNode.position.x + (targetNode.position.x - sourceNode.position.x) / 2;
-        const midpointY = sourceNode.position.y + (targetNode.position.y - sourceNode.position.y) / 2;
+        const midpointX = sourceNode.position.x +
+          (targetNode.position.x - sourceNode.position.x) / 2;
+        const midpointY = sourceNode.position.y +
+          (targetNode.position.y - sourceNode.position.y) / 2;
 
         const timestamp = Date.now();
         const newNodeId = `step-${timestamp}`;
@@ -949,7 +1281,9 @@ export default function WorkflowsPage() {
           },
         };
 
-        const remainingEdges = current.edges.filter((item) => item.id !== edgeId);
+        const remainingEdges = current.edges.filter((item) =>
+          item.id !== edgeId
+        );
 
         const firstEdge: FlowEdge = {
           id: `${edge.source}-${newNodeId}-${timestamp}`,
@@ -981,7 +1315,7 @@ export default function WorkflowsPage() {
         setSelectedNodeId(createdNodeId);
       }
     },
-    [activeFlowId, setSelectedNodeId]
+    [activeFlowId, setSelectedNodeId],
   );
 
   const onNodesChange: OnNodesChange = useCallback(
@@ -998,7 +1332,7 @@ export default function WorkflowsPage() {
         };
       });
     },
-    [activeFlowId]
+    [activeFlowId],
   );
 
   const onEdgesChange: OnEdgesChange = useCallback(
@@ -1015,7 +1349,7 @@ export default function WorkflowsPage() {
         };
       });
     },
-    [activeFlowId]
+    [activeFlowId],
   );
 
   const onConnect: OnConnect = useCallback(
@@ -1032,7 +1366,7 @@ export default function WorkflowsPage() {
         };
       });
     },
-    [activeFlowId]
+    [activeFlowId],
   );
 
   const handleNodeClick = useCallback((_: unknown, node: FlowNode) => {
@@ -1053,7 +1387,11 @@ export default function WorkflowsPage() {
     const flowEdges = current.edges;
 
     if (flowNodes.length === 0) {
-      setSimulationState({ status: "success", logs: [], completedAt: new Date().toISOString() });
+      setSimulationState({
+        status: "success",
+        logs: [],
+        completedAt: new Date().toISOString(),
+      });
       return;
     }
 
@@ -1061,7 +1399,9 @@ export default function WorkflowsPage() {
 
     for (let index = 0; index < flowNodes.length; index += 1) {
       const node = flowNodes[index];
-      const downstream = flowEdges.filter((edge) => edge.source === node.id).length;
+      const downstream = flowEdges.filter((edge) =>
+        edge.source === node.id
+      ).length;
 
       setSimulationState((prev) => ({
         status: "running",
@@ -1078,8 +1418,8 @@ export default function WorkflowsPage() {
         ],
       }));
 
-  // eslint-disable-next-line no-await-in-loop
-  await new Promise((resolve) => setTimeout(resolve, 220));
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, 220));
 
       setSimulationState((prev) => ({
         status: "running",
@@ -1111,7 +1451,7 @@ export default function WorkflowsPage() {
           ...edge.style,
         },
       })),
-    [edgesRaw, handleInsertNode]
+    [edgesRaw, handleInsertNode],
   );
 
   const simulationCompletedLabel = useMemo(() => {
@@ -1138,33 +1478,96 @@ export default function WorkflowsPage() {
             nodes: current.nodes.map((node) =>
               node.id === nodeId
                 ? {
-                    ...node,
-                    data: {
-                      ...node.data,
-                      config: {
-                        ...node.data.config,
-                        [fieldId]: value,
-                      },
+                  ...node,
+                  data: {
+                    ...node.data,
+                    config: {
+                      ...node.data.config,
+                      [fieldId]: value,
                     },
-                  }
+                  },
+                }
                 : node
             ),
           },
         };
       });
     },
-    [activeFlowId]
+    [activeFlowId],
+  );
+
+  const addNodeFromTemplate = useCallback(
+    (templateId: string) => {
+      const template = nodeTemplates.find((t) => t.id === templateId);
+      if (!template) return;
+
+      let createdNodeId: string | null = null;
+      let newPosition = { x: 50, y: 250 };
+
+      setFlowState((prev) => {
+        const current = prev[activeFlowId];
+        if (!current) return prev;
+
+        const timestamp = Date.now();
+        const newNodeId = `${template.id}-${timestamp}`;
+        createdNodeId = newNodeId;
+
+        // Calculate position - place it to the right of last node
+        const lastNode = current.nodes[current.nodes.length - 1];
+        newPosition = lastNode
+          ? { x: lastNode.position.x + 250, y: lastNode.position.y }
+          : { x: 50, y: 250 };
+
+        const newNode: FlowNode = {
+          id: newNodeId,
+          type: "step",
+          position: newPosition,
+          data: {
+            label: template.label,
+            subtitle: template.subtitle,
+            accent: template.accent,
+            icon: template.icon,
+            chipText: template.chipText,
+            helperText: template.description,
+            config: { ...template.defaultConfig },
+            configFields: template.configFields.map((field) => ({ ...field })),
+          },
+        };
+
+        return {
+          ...prev,
+          [activeFlowId]: {
+            ...current,
+            nodes: [...current.nodes, newNode],
+          },
+        };
+      });
+
+      if (createdNodeId) {
+        setSelectedNodeId(createdNodeId);
+        // Pan to the new node with smooth animation
+        setTimeout(() => {
+          setCenter(newPosition.x, newPosition.y, {
+            zoom: 1,
+            duration: 800,
+          });
+        }, 100);
+      }
+    },
+    [activeFlowId, setCenter],
   );
 
   return (
     <div className="min-h-screen bg-[#0A0B14] text-white">
-      <div className="mx-auto flex max-w-[1400px] flex-col gap-6 px-6 py-8">
+      <div className="mx-auto flex max-full flex-col gap-6 px-6 py-8">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Workflow Studio</h1>
+            <h1 className="text-3xl font-bold tracking-tight">
+              Workflow Studio
+            </h1>
             <p className="mt-2 max-w-2xl text-sm text-white/60">
-              Compose hospital-grade automations by sequencing MCP servers, agentic AI, clinical systems,
-              and communication channels.
+              Compose hospital-grade automations by sequencing MCP servers,
+              agentic AI, clinical systems, and communication channels.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -1184,7 +1587,9 @@ export default function WorkflowsPage() {
               disabled={simulationState.status === "running"}
             >
               <Sparkles className="h-4 w-4" />
-              {simulationState.status === "running" ? "Simulating…" : "Simulate execute"}
+              {simulationState.status === "running"
+                ? "Simulating…"
+                : "Simulate execute"}
             </Button>
             <Button size="sm" className="gap-2">
               <Save className="h-4 w-4" />
@@ -1193,113 +1598,27 @@ export default function WorkflowsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[260px_1fr_320px]">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_320px]">
           <Card className="border-white/10 bg-[#101322]">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-base">Flows</CardTitle>
-              <CardDescription>Switch between saved automations</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button
-                className="w-full gap-2"
-                onClick={() => {
-                  const draftId = `draft-${Date.now()}`;
-                  setFlowState((prev) => ({
-                    ...prev,
-                    [draftId]: cloneFlow(initialFlows[0]),
-                  }));
-                  initialFlows.push({ ...initialFlows[0], id: draftId, name: "Untitled workflow" });
-                  setActiveFlowId(draftId);
-                  setSelectedNodeId(null);
-                }}
-              >
-                <Plus className="h-4 w-4" />
-                New Workflow
-              </Button>
-
-              <Separator className="bg-white/10" />
-
-              <div className="space-y-3">
-                {initialFlows.map((flow) => (
-                  <button
-                    key={flow.id}
-                    onClick={() => {
-                      setActiveFlowId(flow.id);
-                      setSelectedNodeId(null);
-                    }}
-                    className={cn(
-                      "w-full rounded-xl border px-4 py-3 text-left transition-colors",
-                      activeFlowId === flow.id
-                        ? "border-white/25 bg-white/10"
-                        : "border-white/10 bg-white/5 hover:bg-white/10"
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-semibold text-white">{flow.name}</p>
-                      <Badge
-                        className={cn(
-                          "border px-2 py-0.5 text-[10px] uppercase tracking-wider",
-                          flowStatusStyles[flow.status]
-                        )}
-                      >
-                        {flow.status}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 line-clamp-2 text-xs text-white/50">{flow.summary}</p>
-                    <div className="mt-3 flex items-center justify-between text-[11px] text-white/35">
-                      <span>{flow.cadence}</span>
-                      <span>{flow.lastDeployed ?? "Never deployed"}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-white/10 bg-[#101322]">
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-xl">
-                    {activeFlowDefinition?.name ?? "Untitled workflow"}
-                  </CardTitle>
-                  <CardDescription>{activeFlowDefinition?.summary}</CardDescription>
-                </div>
-                <div className="rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-200">
-                  Complete {nodes.filter((node) => node.data.status === "attention").length} step(s)
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-white/40">
-                <span className="flex items-center gap-1">
-                  <Clock3 className="h-3.5 w-3.5" /> {activeFlowDefinition?.cadence ?? "Not scheduled"}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Users className="h-3.5 w-3.5" /> Care team automation
-                </span>
-                <span className="flex items-center gap-1">
-                  <AlertTriangle className="h-3.5 w-3.5" /> Draft not yet published
-                </span>
-              </div>
-            </CardHeader>
-            <CardContent className="h-[640px] overflow-hidden rounded-2xl border border-white/5 bg-[#0C0F1C]">
+            <CardContent className="h-[76vh] overflow-hidden rounded-2xl border border-white/5 bg-[#0C0F1C]">
               <div className="relative h-full">
                 <svg width="0" height="0" className="absolute">
                   <defs>
                     <marker
                       id={EDGE_MARKER_ID}
-                      markerWidth="16"
-                      markerHeight="16"
-                      viewBox="0 0 16 16"
-                      refX="13"
-                      refY="8"
+                      markerWidth="20"
+                      markerHeight="20"
+                      viewBox="0 0 20 20"
+                      refX="18"
+                      refY="10"
                       orient="auto"
                       markerUnits="strokeWidth"
                     >
                       <path
-                        d="M2 2 L2 14 L14 8 Z"
+                        d="M4 4 L4 16 L16 10 Z"
                         fill="#7F8BFF"
                         stroke="#7F8BFF"
-                        strokeWidth="1.5"
+                        strokeWidth="1"
                         strokeLinejoin="round"
                       />
                     </marker>
@@ -1334,179 +1653,180 @@ export default function WorkflowsPage() {
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-base">Configuration</CardTitle>
+                  <CardTitle className="text-base">
+                    {selectedNode ? "Configuration" : "Add Node"}
+                  </CardTitle>
                   <CardDescription>
-                    {selectedNode ? selectedNode.data.label : "Select a node to edit"}
+                    {selectedNode
+                      ? selectedNode.data.label
+                      : "Click to add to canvas"}
                   </CardDescription>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" className="h-8 gap-2 px-2 text-xs">
-                    <Copy className="h-3.5 w-3.5" /> Duplicate
-                  </Button>
-                  <Button variant="ghost" size="sm" className="h-8 gap-2 px-2 text-xs text-red-300">
-                    <Trash2 className="h-3.5 w-3.5" /> Delete
-                  </Button>
-                </div>
+                {selectedNode && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSelectedNodeId(null)}
+                      className="h-8 w-8 p-0 text-white/60 hover:text-white"
+                      title="Close"
+                    >
+                      <Plus className="h-4 w-4 rotate-45" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-2 px-2 text-xs text-red-300"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </Button>
+                  </div>
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
-              {selectedNode ? (
-                <>
-                  <div className="rounded-2xl border border-white/10 bg-[#0C0F1C] px-4 py-3">
-                    <p className="text-sm font-semibold text-white">
-                      {selectedNode.data.label}
-                    </p>
-                    <p className="text-xs text-white/50">
-                      {selectedNode.data.subtitle}
-                    </p>
-                    {selectedNode.data.helperText ? (
-                      <div className="mt-3 flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">
-                        <Sparkles className="h-3.5 w-3.5 text-white/50" />
-                        {selectedNode.data.helperText}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="space-y-4">
-                    {selectedNode.data.configFields?.map((field) => {
-                      const value = selectedNode.data.config[field.id] ?? "";
-                      return (
-                        <div key={field.id}>
-                          <label className="block text-xs font-semibold uppercase tracking-wide text-white/50">
-                            {field.label}
-                            {field.required ? <span className="text-rose-300"> *</span> : null}
-                          </label>
-                          {field.helperText ? (
-                            <p className="mt-0.5 text-[11px] text-white/35">{field.helperText}</p>
-                          ) : null}
-                          {field.type === "textarea" ? (
-                            <textarea
-                              value={value}
-                              onChange={(event) =>
-                                updateNodeConfig(selectedNode.id, field.id, event.target.value)
-                              }
-                              placeholder={field.placeholder}
-                              className="mt-2 min-h-[120px] w-full rounded-xl border border-white/12 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
-                            />
-                          ) : (
-                            <Input
-                              type={field.type === "multi" ? "text" : field.type}
-                              value={value}
-                              placeholder={field.placeholder}
-                              onChange={(event) =>
-                                updateNodeConfig(selectedNode.id, field.id, event.target.value)
-                              }
-                              className="mt-2"
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="space-y-3 rounded-2xl border border-white/10 bg-[#0C0F1C] p-4 text-xs text-white/50">
-                    <div className="flex items-center gap-2">
-                      <MessageSquare className="h-3.5 w-3.5 text-white/40" />
-                      Generate sample data
+              {selectedNode
+                ? (
+                  <>
+                    <div className="rounded-2xl border border-white/10 bg-[#0C0F1C] px-4 py-3">
+                      <p className="text-sm font-semibold text-white">
+                        {selectedNode.data.label}
+                      </p>
+                      <p className="text-xs text-white/50">
+                        {selectedNode.data.subtitle}
+                      </p>
+                      {selectedNode.data.helperText
+                        ? (
+                          <div className="mt-3 flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">
+                            <Sparkles className="h-3.5 w-3.5 text-white/50" />
+                            {selectedNode.data.helperText}
+                          </div>
+                        )
+                        : null}
                     </div>
-                    <p className="text-white/35">
-                      Use recent runs to populate this step with a representative payload for rapid testing.
-                    </p>
-                    <Button variant="outline" size="sm" className="gap-1 text-xs">
-                      Generate sample
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <div className="flex h-[360px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-white/5 text-center">
-                  <Sparkles className="mb-3 h-10 w-10 text-white/30" />
-                  <p className="text-sm font-semibold text-white">No node selected</p>
-                  <p className="mt-1 max-w-[220px] text-xs text-white/45">
-                    Click any step in the canvas to configure MCP connectors, AI prompts, and actions.
-                  </p>
-                </div>
-              )}
 
-              <Separator className="bg-white/10" />
+                    <div className="space-y-4">
+                      {selectedNode.data.configFields?.map((field) => {
+                        const value = selectedNode.data.config[field.id] ?? "";
+                        return (
+                          <div key={field.id}>
+                            <label className="block text-xs font-semibold uppercase tracking-wide text-white/50">
+                              {field.label}
+                              {field.required
+                                ? <span className="text-rose-300">*</span>
+                                : null}
+                            </label>
+                            {field.helperText
+                              ? (
+                                <p className="mt-0.5 text-[11px] text-white/35">
+                                  {field.helperText}
+                                </p>
+                              )
+                              : null}
+                            {field.type === "textarea"
+                              ? (
+                                <textarea
+                                  value={value}
+                                  onChange={(event) =>
+                                    updateNodeConfig(
+                                      selectedNode.id,
+                                      field.id,
+                                      event.target.value,
+                                    )}
+                                  placeholder={field.placeholder}
+                                  className="mt-2 min-h-[120px] w-full rounded-xl border border-white/12 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
+                                />
+                              )
+                              : (
+                                <Input
+                                  type={field.type === "multi"
+                                    ? "text"
+                                    : field.type}
+                                  value={value}
+                                  placeholder={field.placeholder}
+                                  onChange={(event) =>
+                                    updateNodeConfig(
+                                      selectedNode.id,
+                                      field.id,
+                                      event.target.value,
+                                    )}
+                                  className="mt-2"
+                                />
+                              )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )
+                : (
+                  <div className="max-h-[68vh] space-y-3 overflow-y-auto pr-2">
+                    {["trigger", "data", "logic", "ai", "action"].map(
+                      (category) => {
+                        const categoryNodes = nodeTemplates.filter(
+                          (template) => template.category === category,
+                        );
 
-              <div className="space-y-2 rounded-2xl border border-white/10 bg-[#0C0F1C] p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-white/50">Run history</p>
-                <div className="space-y-2 text-xs text-white/40">
-                  <p>
-                    Last run <ArrowRight className="inline h-3 w-3" />
-                    {" "}
-                    {activeFlowDefinition?.lastDeployed ?? "No runs"}
-                  </p>
-                  <p>Next scheduled • {activeFlowDefinition?.cadence ?? "Not scheduled"}</p>
-                </div>
-              </div>
+                        if (categoryNodes.length === 0) return null;
 
-              <div className="space-y-2 rounded-2xl border border-white/10 bg-[#0C0F1C] p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-white/50">
-                    Simulated execution
-                  </p>
-                  <span
-                    className={cn(
-                      "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider",
-                      simulationState.status === "running"
-                        ? "border-amber-400/30 bg-amber-500/10 text-amber-200"
-                        : simulationState.status === "success"
-                          ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                          : "border-white/15 bg-white/5 text-white/50"
+                        return (
+                          <div key={category}>
+                            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">
+                              {category}
+                            </h3>
+                            <div className="space-y-2">
+                              {categoryNodes.map((template) => {
+                                const Icon = template.icon;
+                                const accent = accentStyles[template.accent];
+
+                                return (
+                                  <button
+                                    key={template.id}
+                                    onClick={() =>
+                                      addNodeFromTemplate(template.id)}
+                                    className="group w-full rounded-xl border border-white/10 bg-[#0C0F1C] p-3 text-left transition-all hover:border-white/20 hover:bg-[#121527]"
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <div
+                                        className={cn(
+                                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
+                                          accent.icon,
+                                        )}
+                                      >
+                                        <Icon className="h-4 w-4" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <p className="text-sm font-semibold text-white">
+                                            {template.label}
+                                          </p>
+                                          <Badge
+                                            className={cn(
+                                              "h-5 rounded-md px-2 text-[10px] font-medium",
+                                              accent.chip,
+                                            )}
+                                          >
+                                            {template.chipText}
+                                          </Badge>
+                                        </div>
+                                        <p className="mt-0.5 text-xs text-white/50">
+                                          {template.subtitle}
+                                        </p>
+                                        <p className="mt-1 text-xs text-white/40">
+                                          {template.description}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      },
                     )}
-                  >
-                    {simulationState.status === "running"
-                      ? "Running"
-                      : simulationState.status === "success"
-                        ? "Complete"
-                        : "Idle"}
-                  </span>
-                </div>
-
-                {simulationState.status === "idle" && simulationState.logs.length === 0 ? (
-                  <p className="text-xs text-white/40">
-                    Click “Simulate execute” to preview how this workflow would traverse each step.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {simulationState.logs.map((entry) => (
-                      <div
-                        key={entry.nodeId}
-                        className="flex items-center justify-between rounded-xl border border-white/5 bg-[#11152A] px-3 py-2"
-                      >
-                        <div>
-                          <p className="text-xs font-semibold text-white">
-                            {entry.step}. {entry.label}
-                          </p>
-                          <p className="text-[11px] text-white/40">
-                            {entry.subtitle ?? "Workflow step"} • {entry.downstream} downstream
-                            {entry.downstream === 1 ? " path" : " paths"}
-                          </p>
-                        </div>
-                        <div
-                          className={cn(
-                            "flex items-center gap-1 text-xs font-semibold uppercase tracking-wide",
-                            entry.status === "complete" ? "text-emerald-300" : "text-amber-200"
-                          )}
-                        >
-                          {entry.status === "complete" ? (
-                            <CheckCircle className="h-3.5 w-3.5" />
-                          ) : (
-                            <Clock3 className="h-3.5 w-3.5 animate-pulse" />
-                          )}
-                          <span>{entry.status === "complete" ? "Done" : "Running"}</span>
-                        </div>
-                      </div>
-                    ))}
                   </div>
                 )}
-
-                {simulationCompletedLabel ? (
-                  <p className="text-[11px] text-white/35">Completed at {simulationCompletedLabel}</p>
-                ) : null}
-              </div>
             </CardContent>
           </Card>
         </div>
