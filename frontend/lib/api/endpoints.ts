@@ -4,10 +4,15 @@ import type {
   ChatResponsePayload,
   CreateTaskResponse,
   HealthResponse,
+  McpConfigurationStatus,
+  McpServerDefinition,
+  CreateUserMcpConfigurationPayload,
+  UpdateUserMcpConfigurationPayload,
   ServerOverviewResponse,
   Task,
   TaskPriority,
   TaskStatus,
+  UserMcpConfiguration,
   UpdateTaskStatusResponse,
 } from "./types";
 
@@ -57,6 +62,10 @@ async function request<T>(path: string, init?: RequestInit, options?: RequestOpt
 
 export function fetchServerOverview(options?: RequestOptions) {
   return request<ServerOverviewResponse>("/server-overview", undefined, options);
+}
+
+export function fetchMcpServerDefinitions(options?: RequestOptions) {
+  return request<McpServerDefinition[]>("/mcp/servers", undefined, options);
 }
 
 export function fetchTasks(status?: TaskStatus, options?: RequestOptions) {
@@ -128,4 +137,55 @@ export function postExecute(payload: ChatRequestPayload, options?: RequestOption
 
 export function fetchHealth(options?: RequestOptions) {
   return request<HealthResponse>("/health", undefined, options);
+}
+
+export function fetchUserMcpConfigurations(userId: string, options?: RequestOptions) {
+  return request<UserMcpConfiguration[]>(`/mcp/users/${encodeURIComponent(userId)}/configurations`, undefined, options);
+}
+
+export function createUserMcpConfiguration(
+  userId: string,
+  payload: CreateUserMcpConfigurationPayload,
+  options?: RequestOptions,
+) {
+  return request<UserMcpConfiguration>(
+    `/mcp/users/${encodeURIComponent(userId)}/configurations`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+}
+
+export function updateUserMcpConfiguration(
+  userId: string,
+  configurationId: string,
+  payload: UpdateUserMcpConfigurationPayload,
+  options?: RequestOptions,
+) {
+  return request<UserMcpConfiguration>(
+    `/mcp/users/${encodeURIComponent(userId)}/configurations/${encodeURIComponent(configurationId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+}
+
+export function deleteUserMcpConfiguration(userId: string, configurationId: string, options?: RequestOptions) {
+  return request<undefined>(
+    `/mcp/users/${encodeURIComponent(userId)}/configurations/${encodeURIComponent(configurationId)}`,
+    {
+      method: "DELETE",
+    },
+    options,
+  );
 }

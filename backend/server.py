@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Main entry point for the Fuse Home Backend MCP Server."""
 
-from src.servers import epic_server, pubmed_server
+from src.servers import dicom_server, epic_server, gmail_server, pubmed_server
 from fastmcp.client.sampling import SamplingMessage, SamplingParams, RequestContext
 from fastmcp.server.elicitation import AcceptedElicitation
 from dataclasses import dataclass
@@ -39,9 +39,11 @@ async def setup_server():
     # Import servers with prefixes to avoid conflicts
     await main_server.import_server(pubmed_server, prefix="pubmed")
     await main_server.import_server(epic_server, prefix="epic")
+    await main_server.import_server(gmail_server, prefix="gmail")
+    await main_server.import_server(dicom_server, prefix="dicom")
 
     logger.info(
-        "Server composition complete with medical research and clinical capabilities")
+        "Server composition complete with medical research, clinical, communication, and imaging capabilities")
 
 
 @main_server.tool
@@ -79,11 +81,33 @@ async def server_overview(context: Context) -> Dict[str, Any]:
                 "prompts": ["epic_epic_clinical_assistant_prompt"],
                 "resources": [],
             },
+            "gmail": {
+                "name": "GmailServer",
+                "description": "Gmail integration for patient communication",
+                "tools": [
+                    "gmail_send_email",
+                    "gmail_get_gmail_capabilities",
+                ],
+                "prompts": [],
+                "resources": [],
+            },
+            "dicom": {
+                "name": "DICOMServer",
+                "description": "DICOM medical imaging interactions",
+                "tools": [
+                    "dicom_get_dicom_metadata",
+                    "dicom_query_imaging",
+                    "dicom_test_connectivity",
+                    "dicom_get_dicom_capabilities",
+                ],
+                "prompts": [],
+                "resources": [],
+            },
         },
         "integration": {
             "gemini_ready": bool(os.getenv("GEMINI_API_KEY") and
                                  os.getenv("GEMINI_API_KEY") != "your-gemini-api-key-here"),
-            "total_tools": 10,
+            "total_tools": 16,
             "total_resources": 0,
             "total_prompts": 2
         }

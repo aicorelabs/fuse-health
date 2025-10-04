@@ -46,6 +46,65 @@ export interface ServerOverviewResponse {
   integration: IntegrationStats;
 }
 
+export type ConfigFieldType = "text" | "password" | "email" | "url" | "number" | "json";
+
+export interface McpServerConfigField {
+  key: string;
+  label: string;
+  type: ConfigFieldType;
+  required: boolean;
+  description?: string | null;
+  defaultValue?: string | null;
+  isSecret?: boolean;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface McpServerDefinition {
+  id: string;
+  slug: string;
+  displayName: string;
+  description?: string | null;
+  category?: string | null;
+  isManaged: boolean;
+  configFields: McpServerConfigField[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export type McpConfigurationStatus = "active" | "inactive" | "error" | "draft";
+
+export interface UserMcpConfiguration {
+  id: string;
+  userId: string;
+  serverId: string;
+  displayName: string;
+  status: McpConfigurationStatus;
+  configValues: Record<string, unknown>;
+  metadata?: Record<string, unknown> | null;
+  lastStatusMessage?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  lastStatusChange?: string | null;
+  server: McpServerDefinition;
+}
+
+export interface CreateUserMcpConfigurationPayload {
+  serverId: string;
+  displayName: string;
+  status?: McpConfigurationStatus;
+  configValues: Record<string, unknown>;
+  metadata?: Record<string, unknown> | null;
+  lastStatusMessage?: string | null;
+}
+
+export interface UpdateUserMcpConfigurationPayload {
+  displayName?: string;
+  status?: McpConfigurationStatus;
+  configValues?: Record<string, unknown>;
+  metadata?: Record<string, unknown> | null;
+  lastStatusMessage?: string | null;
+}
+
 export type ChatRole = "user" | "assistant";
 
 export interface ChatMessage {
@@ -58,9 +117,19 @@ export interface ChatRequestPayload {
   history?: ChatMessage[];
 }
 
+export type ToolCallStatus = "planned" | "called" | "completed" | "failed";
+
+export interface ToolCallSummary {
+  name: string;
+  status: ToolCallStatus;
+  args?: Record<string, unknown> | null;
+  result_text?: string | null;
+}
+
 export interface ChatResponsePayload {
   response: string;
   is_plan: boolean;
+  tool_calls?: ToolCallSummary[];
 }
 
 export interface HealthResponse {
