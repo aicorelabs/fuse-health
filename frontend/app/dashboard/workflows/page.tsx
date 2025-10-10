@@ -2,6 +2,7 @@
 
 import type { CSSProperties, MouseEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   addEdge,
   applyEdgeChanges,
@@ -30,6 +31,7 @@ import "reactflow/dist/style.css";
 import type { LucideIcon } from "lucide-react";
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   Bot,
   Calendar,
@@ -52,6 +54,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -66,6 +69,142 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
 import { cn } from "@/lib/utils";
+import StepNode from "./components/StepNode";
+import ConfigEdge, { EDGE_MARKER_ID } from "./components/ConfigEdge";
+import type {
+  FlowEdge,
+  FlowNode,
+  NodeConfigField,
+  NodeConnector,
+  StepNodeData,
+} from "./components/types";
+import {
+  accentStyles,
+  connectorBaseStyle,
+  defaultConnectorLabelPlacement,
+} from "./components/types";
+import {
+  calculateNewNodePosition,
+  findLastConnectableNode,
+  getDefaultConnectors,
+} from "./components/utils";
+import { FlowValidation, useFlowValidation } from "./components/FlowValidation";
+import { initialFlows, nodeTemplates } from "./components/constants";
+import {
+  useCreateWorkflow,
+  useNodeTypes,
+  usePublishWorkflow,
+  useUpdateWorkflow,
+  useWorkflow,
+} from "@/lib/api/workflow-queries";
+import type {
+  NodeType,
+  NodeTypeDefinition,
+  Workflow,
+  WorkflowNode,
+} from "@/lib/api/workflows";
+
+// Helper functions to map API node types to UI properties
+function getNodeCategory(
+  apiType: string,
+): "trigger" | "data" | "logic" | "ai" | "action" {
+  const typeMap: Record<
+    string,
+    "trigger" | "data" | "logic" | "ai" | "action"
+  > = {
+    trigger: "trigger",
+    action: "action",
+    condition: "logic",
+    transform: "logic",
+    delay: "logic",
+    loop: "logic",
+    ai: "ai",
+  };
+  return typeMap[apiType] || "action";
+}
+
+function getAccentForNodeType(apiType: string): keyof typeof accentStyles {
+  const accentMap: Record<string, keyof typeof accentStyles> = {
+    trigger: "violet",
+    action: "blue",
+    condition: "aqua",
+    transform: "green",
+    delay: "pink",
+    loop: "green",
+    ai: "violet",
+  };
+  return accentMap[apiType] || "blue";
+}
+
+function getIconForNodeType(apiType: string): LucideIcon {
+  const iconMap: Record<string, LucideIcon> = {
+    trigger: Clock3,
+    action: Mail,
+    condition: Filter,
+    transform: Settings,
+    delay: Clock3,
+    loop: Repeat,
+    ai: Sparkles,
+  };
+  return iconMap[apiType] || Settings;
+}
+
+function getChipTextForNodeType(apiType: string): string {
+  const chipMap: Record<string, string> = {
+    trigger: "Trigger",
+    action: "Action",
+    condition: "Logic",
+    transform: "Logic",
+    delay: "Logic",
+    loop: "Logic",
+    ai: "AI",
+  };
+  return chipMap[apiType] || "Action";
+}
+
+function getApiNodeType(chipText: string): string {
+  const reverseMap: Record<string, string> = {
+    Trigger: "trigger",
+    Action: "action",
+    Logic: "condition",
+    AI: "ai",
+    Data: "action",
+  };
+  return reverseMap[chipText] || "action";
+}
+
+function getAccentForCategory(category: string): keyof typeof accentStyles {
+  const accentMap: Record<string, keyof typeof accentStyles> = {
+    trigger: "violet",
+    action: "blue",
+    data: "green",
+    logic: "aqua",
+    ai: "pink",
+  };
+  return accentMap[category] || "blue";
+}
+
+function getIconForCategory(category: string): LucideIcon {
+  const iconMap: Record<string, LucideIcon> = {
+    trigger: Clock3,
+    action: Mail,
+    data: Table,
+    logic: Filter,
+    ai: Sparkles,
+  };
+  return iconMap[category] || Settings;
+}
+
+function getChipTextForCategory(category: string): string {
+  const chipMap: Record<string, string> = {
+    trigger: "Trigger",
+    action: "Action",
+    data: "Data",
+    logic: "Logic",
+    ai: "AI",
+  };
+  return chipMap[category] || "Action";
+}
 
 const flowStatusStyles: Record<string, string> = {
   published: "bg-emerald-500/15 text-emerald-300 border-emerald-500/20",
@@ -73,73 +212,13 @@ const flowStatusStyles: Record<string, string> = {
   paused: "bg-amber-500/15 text-amber-200 border-amber-500/20",
 };
 
-const accentStyles: Record<
-  "violet" | "green" | "aqua" | "pink" | "red" | "blue",
-  { chip: string; icon: string }
-> = {
-  violet: {
-    chip: "bg-[#F1E9FF]/80 text-[#6D3BFF]",
-    icon: "bg-[#6D3BFF]/15 text-[#C5B5FF]",
-  },
-  green: {
-    chip: "bg-[#E7F7EF] text-[#17A673]",
-    icon: "bg-[#17A673]/15 text-[#6BE0B5]",
-  },
-  aqua: {
-    chip: "bg-[#E6F4FF] text-[#0A84FF]",
-    icon: "bg-[#0A84FF]/15 text-[#6EC1FF]",
-  },
-  pink: {
-    chip: "bg-[#FDE9F4] text-[#D34292]",
-    icon: "bg-[#D34292]/15 text-[#F8A8D2]",
-  },
-  red: {
-    chip: "bg-[#FDEBEC] text-[#E15765]",
-    icon: "bg-[#E15765]/15 text-[#F9A5AC]",
-  },
-  blue: {
-    chip: "bg-[#E9F0FF] text-[#3A6DFF]",
-    icon: "bg-[#3A6DFF]/15 text-[#9BB6FF]",
-  },
-};
+// accentStyles now imported from components/types
 
-interface NodeConfigField {
-  id: string;
-  label: string;
-  type: "text" | "email" | "multi" | "textarea";
-  required?: boolean;
-  placeholder?: string;
-  helperText?: string;
-}
-
-interface NodeConnector {
-  id: string;
-  type: "source" | "target";
-  position: Position;
-  label?: string;
-  labelPlacement?: "before" | "after";
-  style?: CSSProperties;
-}
-
-interface StepNodeData {
-  label: string;
-  subtitle: string;
-  accent: keyof typeof accentStyles;
-  icon: LucideIcon;
-  status?: "complete" | "pending" | "attention";
-  helperText?: string;
-  chipText?: string;
-  config: Record<string, string>;
-  configFields?: NodeConfigField[];
-  connectors?: NodeConnector[];
-}
-
-type FlowNode = Node<StepNodeData>;
-type FlowEdge = Edge;
+// Types moved to components/types
 
 type SimulationStatus = "idle" | "running" | "success";
 
-interface SimulationLogEntry {
+export interface SimulationLogEntry {
   step: number;
   nodeId: string;
   label: string;
@@ -148,7 +227,7 @@ interface SimulationLogEntry {
   downstream: number;
 }
 
-interface FlowDefinition {
+export interface FlowDefinition {
   id: string;
   name: string;
   category: string;
@@ -160,7 +239,7 @@ interface FlowDefinition {
   edges: FlowEdge[];
 }
 
-interface NodeTemplate {
+export interface NodeTemplate {
   id: string;
   label: string;
   subtitle: string;
@@ -173,766 +252,7 @@ interface NodeTemplate {
   configFields: NodeConfigField[];
 }
 
-const nodeTemplates: NodeTemplate[] = [
-  {
-    id: "schedule",
-    label: "Schedule Trigger",
-    subtitle: "Time-based",
-    category: "trigger",
-    accent: "violet",
-    icon: Clock3,
-    chipText: "Trigger",
-    description: "Run workflow on a schedule",
-    defaultConfig: {
-      cadence: "Daily",
-      time: "09:00 AM",
-    },
-    configFields: [
-      {
-        id: "cadence",
-        label: "Cadence",
-        type: "text",
-        required: true,
-        placeholder: "Daily",
-      },
-      { id: "time", label: "Time", type: "text", placeholder: "09:00 AM" },
-    ],
-  },
-  {
-    id: "event-trigger",
-    label: "Event Trigger",
-    subtitle: "Epic/EHR event",
-    category: "trigger",
-    accent: "blue",
-    icon: Database,
-    chipText: "Trigger",
-    description: "Start on EHR data event",
-    defaultConfig: {
-      event: "Observation.create",
-    },
-    configFields: [
-      { id: "event", label: "Event Type", type: "text", required: true },
-      { id: "facility", label: "Facility", type: "text" },
-    ],
-  },
-  {
-    id: "google-sheets",
-    label: "Google Sheets",
-    subtitle: "Read/write rows",
-    category: "data",
-    accent: "green",
-    icon: Table,
-    chipText: "Data",
-    description: "Fetch or update spreadsheet data",
-    defaultConfig: {
-      sheetUrl: "",
-      worksheet: "Sheet1",
-      range: "A:Z",
-    },
-    configFields: [
-      {
-        id: "sheetUrl",
-        label: "Sheet URL",
-        type: "text",
-        required: true,
-        placeholder: "https://docs.google.com/...",
-      },
-      { id: "worksheet", label: "Worksheet", type: "text" },
-      { id: "range", label: "Range", type: "text" },
-    ],
-  },
-  {
-    id: "filter",
-    label: "Filter/Branch",
-    subtitle: "Conditional logic",
-    category: "logic",
-    accent: "aqua",
-    icon: Filter,
-    chipText: "Logic",
-    description: "Route based on conditions",
-    defaultConfig: {
-      expression: "",
-    },
-    configFields: [
-      {
-        id: "expression",
-        label: "Condition",
-        type: "text",
-        required: true,
-        placeholder: "value > 100",
-      },
-    ],
-  },
-  {
-    id: "loop",
-    label: "Loop Iterator",
-    subtitle: "For each item",
-    category: "logic",
-    accent: "aqua",
-    icon: Repeat,
-    chipText: "Logic",
-    description: "Iterate over collection",
-    defaultConfig: {
-      iterator: "items",
-      concurrency: "Sequential",
-    },
-    configFields: [
-      { id: "iterator", label: "Iterator", type: "text", placeholder: "items" },
-      {
-        id: "concurrency",
-        label: "Concurrency",
-        type: "text",
-        placeholder: "Sequential",
-      },
-    ],
-  },
-  {
-    id: "text-ai",
-    label: "Text AI",
-    subtitle: "GPT/Claude",
-    category: "ai",
-    accent: "pink",
-    icon: Sparkles,
-    chipText: "AI Agent",
-    description: "Generate text with LLM",
-    defaultConfig: {
-      prompt: "",
-      temperature: "0.7",
-    },
-    configFields: [
-      {
-        id: "prompt",
-        label: "Prompt",
-        type: "textarea",
-        required: true,
-        placeholder: "Write instructions...",
-      },
-      {
-        id: "temperature",
-        label: "Temperature",
-        type: "text",
-        placeholder: "0.7",
-      },
-    ],
-  },
-  {
-    id: "ai-assistant",
-    label: "AI Assistant",
-    subtitle: "Multi-step agent",
-    category: "ai",
-    accent: "violet",
-    icon: Bot,
-    chipText: "AI Agent",
-    description: "Run autonomous AI agent",
-    defaultConfig: {
-      instructions: "",
-    },
-    configFields: [
-      {
-        id: "instructions",
-        label: "Instructions",
-        type: "textarea",
-        required: true,
-        placeholder: "Describe the agent's task...",
-      },
-    ],
-  },
-  {
-    id: "gmail",
-    label: "Gmail",
-    subtitle: "Send email",
-    category: "action",
-    accent: "red",
-    icon: Mail,
-    chipText: "Action",
-    description: "Send emails via Gmail",
-    defaultConfig: {
-      to: "",
-      subject: "",
-      body: "",
-    },
-    configFields: [
-      {
-        id: "to",
-        label: "To",
-        type: "email",
-        required: true,
-        placeholder: "recipient@example.com",
-      },
-      { id: "subject", label: "Subject", type: "text", required: true },
-      {
-        id: "body",
-        label: "Body",
-        type: "textarea",
-        placeholder: "Email content...",
-      },
-    ],
-  },
-  {
-    id: "notification",
-    label: "Send Notification",
-    subtitle: "SMS/PagerDuty",
-    category: "action",
-    accent: "pink",
-    icon: MessageSquare,
-    chipText: "Action",
-    description: "Alert via SMS or pager",
-    defaultConfig: {
-      channel: "SMS",
-      message: "",
-    },
-    configFields: [
-      { id: "channel", label: "Channel", type: "text", required: true },
-      {
-        id: "message",
-        label: "Message",
-        type: "textarea",
-        required: true,
-        placeholder: "Alert message...",
-      },
-    ],
-  },
-  {
-    id: "epic-write",
-    label: "Write to Epic",
-    subtitle: "Update EHR",
-    category: "action",
-    accent: "blue",
-    icon: FileText,
-    chipText: "Action",
-    description: "Create/update Epic record",
-    defaultConfig: {
-      resource: "",
-      data: "",
-    },
-    configFields: [
-      {
-        id: "resource",
-        label: "Resource Type",
-        type: "text",
-        required: true,
-        placeholder: "Observation",
-      },
-      {
-        id: "data",
-        label: "Data",
-        type: "textarea",
-        required: true,
-        placeholder: "JSON payload...",
-      },
-    ],
-  },
-];
-
-const initialFlows: FlowDefinition[] = [
-  {
-    id: "flow-upsell",
-    name: "Automate Sending Upsell Offers",
-    category: "Care navigation",
-    summary:
-      "Review weekly patient cohorts, craft contextual upsell messaging, and deliver through Gmail.",
-    cadence: "Every week on Monday 08:00",
-    status: "draft",
-    lastDeployed: "Never",
-    nodes: [
-      {
-        id: "schedule",
-        type: "step",
-        position: { x: 50, y: 250 },
-        data: {
-          label: "Every Week",
-          subtitle: "Schedule",
-          accent: "violet",
-          icon: Clock3,
-          chipText: "Trigger",
-          connectors: [
-            {
-              id: "schedule-out",
-              type: "source",
-              position: Position.Right,
-            },
-          ],
-          config: {
-            cadence: "Weekly",
-            day: "Monday",
-            time: "08:00 AM",
-          },
-          configFields: [
-            {
-              id: "cadence",
-              label: "Cadence",
-              type: "text",
-              required: true,
-              placeholder: "Weekly",
-            },
-            { id: "day", label: "Day", type: "text", placeholder: "Monday" },
-            {
-              id: "time",
-              label: "Time",
-              type: "text",
-              placeholder: "08:00 AM",
-            },
-          ],
-        },
-      },
-      {
-        id: "sheet",
-        type: "step",
-        position: { x: 300, y: 250 },
-        data: {
-          label: "Get next row(s)",
-          subtitle: "Google Sheets",
-          accent: "green",
-          icon: Table,
-          chipText: "Data",
-          helperText: "Use filter to fetch only new opportunities",
-          connectors: [
-            {
-              id: "sheet-in",
-              type: "target",
-              position: Position.Left,
-            },
-            {
-              id: "sheet-out",
-              type: "source",
-              position: Position.Right,
-            },
-          ],
-          config: {
-            sheetUrl: "https://docs.google.com/spreadsheets/...",
-            worksheet: "Upsell Opportunities",
-            range: "A:E",
-          },
-          configFields: [
-            {
-              id: "sheetUrl",
-              label: "Sheet URL",
-              type: "text",
-              required: true,
-              placeholder: "https://docs.google.com/...",
-            },
-            {
-              id: "worksheet",
-              label: "Worksheet",
-              type: "text",
-              placeholder: "Upsell Opportunities",
-            },
-            {
-              id: "range",
-              label: "Range",
-              type: "text",
-              placeholder: "A:E",
-            },
-          ],
-        },
-      },
-      {
-        id: "loop",
-        type: "step",
-        position: { x: 550, y: 250 },
-        data: {
-          label: "Loop on Items",
-          subtitle: "For each patient",
-          accent: "aqua",
-          icon: Repeat,
-          chipText: "Logic",
-          connectors: [
-            {
-              id: "loop-in",
-              type: "target",
-              position: Position.Left,
-            },
-            {
-              id: "loop-iterate",
-              type: "source",
-              position: Position.Bottom,
-              style: { left: "50%" },
-            },
-            {
-              id: "loop-complete",
-              type: "source",
-              position: Position.Right,
-            },
-          ],
-          config: {
-            iterator: "rows",
-            concurrency: "Sequential",
-          },
-          configFields: [
-            {
-              id: "iterator",
-              label: "Iterator",
-              type: "text",
-              placeholder: "rows",
-            },
-            {
-              id: "concurrency",
-              label: "Concurrency",
-              type: "text",
-              placeholder: "Sequential",
-            },
-          ],
-        },
-      },
-      {
-        id: "ai",
-        type: "step",
-        position: { x: 550, y: 420 },
-        data: {
-          label: "Ask AI",
-          subtitle: "Text AI",
-          accent: "pink",
-          icon: Sparkles,
-          chipText: "Agent",
-          helperText: "Use clinical tone guidelines for messaging",
-          connectors: [
-            {
-              id: "ai-in",
-              type: "target",
-              position: Position.Top,
-              style: { left: "50%" },
-            },
-            {
-              id: "ai-out",
-              type: "source",
-              position: Position.Right,
-            },
-          ],
-          config: {
-            prompt:
-              "Craft an upsell email for the patient using the supplied fields and follow the tone guide.",
-            temperature: "0.4",
-          },
-          configFields: [
-            {
-              id: "prompt",
-              label: "Prompt",
-              type: "textarea",
-              required: true,
-              placeholder: "Write an email explaining...",
-            },
-            {
-              id: "temperature",
-              label: "Creativity",
-              type: "text",
-              placeholder: "0.4",
-            },
-          ],
-        },
-      },
-      {
-        id: "email",
-        type: "step",
-        position: { x: 800, y: 250 },
-        data: {
-          label: "Send Email",
-          subtitle: "Gmail",
-          accent: "red",
-          icon: Mail,
-          status: "attention",
-          helperText: "Connect Gmail and map fields before publishing",
-          chipText: "Action",
-          connectors: [
-            {
-              id: "email-in-loop",
-              type: "target",
-              position: Position.Left,
-              style: { top: "50%" },
-            },
-            {
-              id: "email-in-content",
-              type: "target",
-              position: Position.Bottom,
-            },
-            {
-              id: "email-out",
-              type: "source",
-              position: Position.Right,
-            },
-          ],
-          config: {
-            connection: "",
-            to: "",
-            cc: "",
-            bcc: "",
-            subject: "",
-          },
-          configFields: [
-            {
-              id: "connection",
-              label: "Connection",
-              type: "text",
-              required: true,
-              placeholder: "Select Gmail connection",
-            },
-            {
-              id: "to",
-              label: "Receiver Email (To)",
-              type: "email",
-              required: true,
-            },
-            { id: "cc", label: "CC Email", type: "multi" },
-            { id: "bcc", label: "BCC Email", type: "multi" },
-            { id: "subject", label: "Subject", type: "text", required: true },
-          ],
-        },
-      },
-    ],
-    edges: [
-      {
-        id: "schedule-sheet",
-        source: "schedule",
-        sourceHandle: "schedule-out",
-        target: "sheet",
-        targetHandle: "sheet-in",
-        type: "smoothstep",
-      },
-      {
-        id: "sheet-loop",
-        source: "sheet",
-        sourceHandle: "sheet-out",
-        target: "loop",
-        targetHandle: "loop-in",
-        type: "smoothstep",
-      },
-      {
-        id: "loop-ai",
-        source: "loop",
-        sourceHandle: "loop-iterate",
-        target: "ai",
-        targetHandle: "ai-in",
-        type: "smoothstep",
-      },
-      {
-        id: "loop-email",
-        source: "loop",
-        sourceHandle: "loop-complete",
-        target: "email",
-        targetHandle: "email-in-loop",
-        type: "smoothstep",
-      },
-      {
-        id: "ai-email",
-        source: "ai",
-        sourceHandle: "ai-out",
-        target: "email",
-        targetHandle: "email-in-content",
-        type: "smoothstep",
-      },
-    ],
-  },
-  {
-    id: "flow-critical-labs",
-    name: "Escalate Critical Lab Results",
-    category: "Clinical safety",
-    summary:
-      "Detect critical lab values, alert the covering provider, and document the intervention.",
-    cadence: "Runs continuously on lab events",
-    status: "published",
-    lastDeployed: "2025-08-24 11:14",
-    nodes: [
-      {
-        id: "trigger-lab",
-        type: "step",
-        position: { x: 50, y: 250 },
-        data: {
-          label: "On Lab Result",
-          subtitle: "Epic event",
-          accent: "blue",
-          icon: Database,
-          chipText: "Trigger",
-          connectors: [
-            {
-              id: "trigger-lab-out",
-              type: "source",
-              position: Position.Right,
-            },
-          ],
-          config: {
-            event: "Observation.create",
-            facility: "Emergency",
-          },
-          configFields: [
-            { id: "event", label: "Event", type: "text", required: true },
-            { id: "facility", label: "Facility", type: "text" },
-          ],
-        },
-      },
-      {
-        id: "filter-critical",
-        type: "step",
-        position: { x: 300, y: 250 },
-        data: {
-          label: "Filter critical values",
-          subtitle: "Threshold > limit",
-          accent: "aqua",
-          icon: Filter,
-          chipText: "Logic",
-          connectors: [
-            {
-              id: "filter-in",
-              type: "target",
-              position: Position.Left,
-            },
-            {
-              id: "filter-true",
-              type: "source",
-              position: Position.Right,
-              style: { top: "50%" },
-            },
-            {
-              id: "filter-false",
-              type: "source",
-              position: Position.Top,
-              label: "Else",
-              style: { left: "50%" },
-            },
-          ],
-          config: {
-            expression: "result.flag === 'critical'",
-          },
-          configFields: [
-            {
-              id: "expression",
-              label: "Filter expression",
-              type: "text",
-              placeholder: "result.flag === 'critical'",
-            },
-          ],
-        },
-      },
-      {
-        id: "notify",
-        type: "step",
-        position: { x: 550, y: 250 },
-        data: {
-          label: "Notify covering provider",
-          subtitle: "PagerDuty + SMS",
-          accent: "pink",
-          icon: MessageSquare,
-          chipText: "Action",
-          connectors: [
-            {
-              id: "notify-in",
-              type: "target",
-              position: Position.Left,
-            },
-            {
-              id: "notify-out",
-              type: "source",
-              position: Position.Right,
-            },
-          ],
-          config: {
-            channel: "On-call SMS",
-            fallback: "PagerDuty escalation",
-          },
-          configFields: [
-            { id: "channel", label: "Primary Channel", type: "text" },
-            { id: "fallback", label: "Fallback", type: "text" },
-          ],
-        },
-      },
-      {
-        id: "ai-note",
-        type: "step",
-        position: { x: 800, y: 250 },
-        data: {
-          label: "Draft clinical note",
-          subtitle: "AI summarization",
-          accent: "violet",
-          icon: Bot,
-          chipText: "Agent",
-          connectors: [
-            {
-              id: "ai-note-in",
-              type: "target",
-              position: Position.Left,
-            },
-            {
-              id: "ai-note-out",
-              type: "source",
-              position: Position.Right,
-            },
-          ],
-          config: {
-            template: "Document alert, response, and patient outreach",
-          },
-          configFields: [
-            { id: "template", label: "Template", type: "textarea" },
-          ],
-        },
-      },
-      {
-        id: "file",
-        type: "step",
-        position: { x: 1050, y: 250 },
-        data: {
-          label: "Attach to chart",
-          subtitle: "Epic SmartDoc",
-          accent: "green",
-          icon: FileText,
-          status: "complete",
-          chipText: "Action",
-          connectors: [
-            {
-              id: "file-in",
-              type: "target",
-              position: Position.Left,
-            },
-            {
-              id: "file-out",
-              type: "source",
-              position: Position.Right,
-            },
-          ],
-          config: {
-            encounterType: "ED Follow-up",
-          },
-          configFields: [
-            { id: "encounterType", label: "Encounter Type", type: "text" },
-          ],
-        },
-      },
-    ],
-    edges: [
-      {
-        id: "lab-filter",
-        source: "trigger-lab",
-        sourceHandle: "trigger-lab-out",
-        target: "filter-critical",
-        targetHandle: "filter-in",
-        type: "smoothstep",
-      },
-      {
-        id: "filter-notify",
-        source: "filter-critical",
-        sourceHandle: "filter-true",
-        target: "notify",
-        targetHandle: "notify-in",
-        type: "smoothstep",
-      },
-      {
-        id: "notify-note",
-        source: "notify",
-        sourceHandle: "notify-out",
-        target: "ai-note",
-        targetHandle: "ai-note-in",
-        type: "smoothstep",
-      },
-      {
-        id: "note-file",
-        source: "ai-note",
-        sourceHandle: "ai-note-out",
-        target: "file",
-        targetHandle: "file-in",
-        type: "smoothstep",
-      },
-    ],
-  },
-];
-
-interface FlowStateValue {
+export interface FlowStateValue {
   nodes: FlowNode[];
   edges: FlowEdge[];
 }
@@ -956,222 +276,17 @@ function cloneFlow(flow: FlowDefinition): FlowStateValue {
   };
 }
 
-const CONNECTOR_OFFSET = 14;
+// connector styles moved to components/types
 
-const connectorBaseStyle: Record<Position, CSSProperties> = {
-  [Position.Top]: {
-    top: -CONNECTOR_OFFSET,
-    left: "50%",
-    transform: "translate(-50%, 0)",
-  },
-  [Position.Bottom]: {
-    bottom: -CONNECTOR_OFFSET,
-    left: "50%",
-    transform: "translate(-50%, 0)",
-  },
-  [Position.Left]: {
-    left: -CONNECTOR_OFFSET,
-    top: "50%",
-    transform: "translate(0, -50%)",
-  },
-  [Position.Right]: {
-    right: -CONNECTOR_OFFSET,
-    top: "50%",
-    transform: "translate(0, -50%)",
-  },
-};
+// StepNode moved to components/StepNode
 
-const defaultConnectorLabelPlacement: Record<Position, "before" | "after"> = {
-  [Position.Top]: "before",
-  [Position.Bottom]: "after",
-  [Position.Left]: "before",
-  [Position.Right]: "after",
-};
-
-const StepNode = (
-  { id, data, selected }: {
-    id: string;
-    data: StepNodeData;
-    selected?: boolean;
-  },
-) => {
-  const Icon = data.icon;
-  const accent = accentStyles[data.accent];
-  const connectors = data.connectors && data.connectors.length > 0
-    ? data.connectors
-    : ([
-      { id: `${id}-in`, type: "target", position: Position.Left },
-      { id: `${id}-out`, type: "source", position: Position.Right },
-    ] satisfies NodeConnector[]);
-
-  return (
-    <div
-      className={cn(
-        "relative group rounded-2xl border px-4 py-3 shadow-lg shadow-black/30 transition-all duration-300",
-        selected
-          ? "border-emerald-500 ring-2 ring-emerald-500/30"
-          : "border-white/12",
-      )}
-    >
-      {connectors.map((connector) => {
-        const placement = connector.labelPlacement ??
-          defaultConnectorLabelPlacement[connector.position];
-        const isHorizontal = connector.position === Position.Left ||
-          connector.position === Position.Right;
-        const wrapperStyle: CSSProperties = {
-          ...connectorBaseStyle[connector.position],
-          ...(connector.style ?? {}),
-        };
-
-        return (
-          <div
-            key={connector.id}
-            style={wrapperStyle}
-            className={cn(
-              "absolute z-10 flex items-center",
-              isHorizontal ? "gap-2" : "flex-col items-center gap-1",
-            )}
-          >
-            {placement === "before" && connector.label
-              ? (
-                <span className="pointer-events-none rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/60">
-                  {connector.label}
-                </span>
-              )
-              : null}
-            <Handle
-              id={connector.id}
-              type={connector.type}
-              position={connector.position}
-              style={{ position: "static" }}
-              className="h-3 w-3 rounded-full border border-[#7C8DB5] bg-white shadow-[0_0_0_2px_rgba(12,16,28,0.95)]"
-            />
-            {placement === "after" && connector.label
-              ? (
-                <span className="pointer-events-none rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/60">
-                  {connector.label}
-                </span>
-              )
-              : null}
-          </div>
-        );
-      })}
-
-      <div className="flex items-start gap-3">
-        <div
-          className={cn(
-            "flex h-10 w-10 items-center justify-center rounded-xl",
-            accent.icon,
-          )}
-        >
-          <Icon className="h-5 w-5" />
-        </div>
-        <div className="min-w-[160px] flex-1">
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold text-white">{data.label}</p>
-            {data.chipText
-              ? (
-                <span
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                    accent.chip,
-                  )}
-                >
-                  {data.chipText}
-                </span>
-              )
-              : null}
-          </div>
-          <p className="text-xs text-white/60">{data.subtitle}</p>
-          {data.helperText
-            ? <p className="mt-2 text-xs text-white/40">{data.helperText}</p>
-            : null}
-          {data.status === "attention"
-            ? (
-              <div className="mt-2 flex items-center gap-1 text-xs text-amber-300">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                Requires configuration
-              </div>
-            )
-            : null}
-          {data.status === "complete"
-            ? (
-              <div className="mt-2 flex items-center gap-1 text-xs text-emerald-300">
-                <CheckCircle className="h-3.5 w-3.5" />
-                Ready for publish
-              </div>
-            )
-            : null}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const EDGE_MARKER_ID = "edge-arrow";
 const defaultEdgeStyle: CSSProperties = {
   stroke: "#7F8BFF",
   strokeWidth: 1.6,
   strokeLinecap: "round",
   strokeLinejoin: "round",
 };
-
-const ConfigEdge = ({
-  id,
-  sourceX,
-  sourceY,
-  sourcePosition,
-  targetX,
-  targetY,
-  targetPosition,
-  style,
-  markerEnd,
-  data,
-}: EdgeProps) => {
-  const [edgePath, labelX, labelY] = getBezierPath({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-  });
-
-  const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (data && typeof data.onInsert === "function") {
-      data.onInsert(id);
-    }
-  };
-
-  return (
-    <>
-      <path
-        className="react-flow__edge-path"
-        d={edgePath}
-        style={{ ...defaultEdgeStyle, ...style }}
-        markerEnd={markerEnd ?? `url(#${EDGE_MARKER_ID})`}
-        fill="none"
-      />
-      <foreignObject
-        width={28}
-        height={28}
-        x={labelX - 14}
-        y={labelY - 14}
-        className="overflow-visible"
-      >
-        <button
-          type="button"
-          onClick={handleClick}
-          className="flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-[#151A2D] text-white/70 shadow-md transition-colors hover:border-white/40 hover:text-white"
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </button>
-      </foreignObject>
-    </>
-  );
-};
+// ConfigEdge moved to components/ConfigEdge
 
 const nodeTypes = { step: StepNode };
 
@@ -1203,17 +318,137 @@ export default function WorkflowsPage() {
 }
 
 function WorkflowsPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const workflowId = searchParams.get("id");
   const { setCenter } = useReactFlow();
-  const [activeFlowId, setActiveFlowId] = useState(initialFlows[0]?.id ?? "");
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  const [flowState, setFlowState] = useState<Record<string, FlowStateValue>>(
-    () =>
-      initialFlows.reduce((memo, flow) => {
-        memo[flow.id] = cloneFlow(flow);
-        return memo;
-      }, {} as Record<string, FlowStateValue>),
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [workflowName, setWorkflowName] = useState("Untitled Workflow");
+  const [workflowDescription, setWorkflowDescription] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Load node types from backend
+  const { data: nodeTypesData, isLoading: isLoadingNodeTypes } = useNodeTypes();
+
+  // Load workflow from API if ID is provided
+  const { data: loadedWorkflow, isLoading: isLoadingWorkflow } = useWorkflow(
+    workflowId || "",
   );
+
+  const createWorkflow = useCreateWorkflow();
+  const updateWorkflow = useUpdateWorkflow();
+  const publishWorkflow = usePublishWorkflow();
+
+  // Flow state
+  const [nodes, setNodes] = useState<FlowNode[]>([]);
+  const [edgesRaw, setEdgesRaw] = useState<FlowEdge[]>([]);
+
+  // Load workflow data when available
+  useEffect(() => {
+    if (loadedWorkflow) {
+      setWorkflowName(loadedWorkflow.name);
+      setWorkflowDescription(loadedWorkflow.description || "");
+
+      // Helper to find config fields for a node from backend node types
+      const getConfigFieldsForNode = (
+        node: WorkflowNode,
+      ): NodeConfigField[] => {
+        if (!nodeTypesData) return [];
+
+        // Search all backend node type categories
+        const allBackendNodes = [
+          ...nodeTypesData.trigger,
+          ...nodeTypesData.action,
+          ...nodeTypesData.data,
+          ...nodeTypesData.logic,
+          ...nodeTypesData.ai,
+        ];
+
+        // Strategy 1: Try to find by service type (most reliable)
+        let nodeDef = allBackendNodes.find(
+          (n) => n.service_type && n.service_type === node.data.serviceType,
+        );
+
+        if (!nodeDef) {
+          // Strategy 2: Try to match by node type and label
+          const category = getNodeCategory(node.type);
+          nodeDef = allBackendNodes.find(
+            (n) => n.category === category && n.label === node.data.label,
+          );
+        }
+
+        if (!nodeDef) {
+          // Strategy 3: For nodes without service_type, match by category
+          const category = getNodeCategory(node.type);
+          const categoryNodes = allBackendNodes.filter((n) =>
+            n.category === category
+          );
+
+          // For condition nodes, match "Condition"
+          if (node.type === "condition") {
+            nodeDef = categoryNodes.find((n) => n.id === "condition");
+          } // For transform nodes
+          else if (node.type === "transform") {
+            nodeDef = categoryNodes.find((n) => n.id === "transform");
+          } // For loop nodes
+          else if (node.type === "loop") {
+            nodeDef = categoryNodes.find((n) => n.id === "loop");
+          } // For delay nodes
+          else if (node.type === "delay") {
+            nodeDef = categoryNodes.find((n) => n.id === "delay");
+          } // For AI nodes, match by label
+          else if (node.type === "ai") {
+            nodeDef = categoryNodes.find((n) => n.label === node.data.label);
+          }
+        }
+
+        if (nodeDef) {
+          return nodeDef.fields.map((field) => ({
+            id: field.id,
+            label: field.label,
+            type: field.type === "number"
+              ? "text"
+              : field.type as "text" | "email" | "textarea" | "multi",
+            required: field.required,
+            placeholder: field.placeholder,
+          }));
+        }
+
+        return [];
+      };
+
+      // Convert API nodes to FlowNodes
+      const flowNodes: FlowNode[] = loadedWorkflow.nodes.map((node) => ({
+        id: node.id,
+        type: "step",
+        position: node.position,
+        data: {
+          label: node.data.label,
+          subtitle: node.data.serviceType || "Configure this step",
+          accent: getAccentForNodeType(node.type),
+          icon: getIconForNodeType(node.type),
+          chipText: getChipTextForNodeType(node.type),
+          helperText: "Select to configure",
+          config: node.data.config || {},
+          configFields: getConfigFieldsForNode(node),
+          connectors: getDefaultConnectors(node.id, getNodeCategory(node.type)),
+        },
+      }));
+
+      const flowEdges: FlowEdge[] = loadedWorkflow.edges.map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.source + "-out",
+        targetHandle: edge.target + "-in",
+        type: "smoothstep",
+      }));
+
+      setNodes(flowNodes);
+      setEdgesRaw(flowEdges);
+    }
+  }, [loadedWorkflow, nodeTypesData]);
 
   const [simulationState, setSimulationState] = useState<{
     status: SimulationStatus;
@@ -1221,39 +456,125 @@ function WorkflowsPageContent() {
     completedAt?: string;
   }>({ status: "idle", logs: [] });
 
-  const activeFlowDefinition = useMemo(
-    () => initialFlows.find((flow) => flow.id === activeFlowId),
-    [activeFlowId],
-  );
-
-  const activeState = flowState[activeFlowId];
-  const nodes = activeState?.nodes ?? [];
-  const edgesRaw = activeState?.edges ?? [];
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
   const edgeTypes = useMemo(() => ({ configEdge: ConfigEdge }), []);
 
+  // Get validation results
+  const validation = useFlowValidation(nodes, edgesRaw);
+
   useEffect(() => {
     setSelectedNodeId((prev) => prev ?? nodes[0]?.id ?? null);
-  }, [activeFlowId, flowState, nodes]);
+  }, [nodes]);
+
+  // Helper function to convert FlowNodes back to API format
+  const convertToApiFormat = useCallback(() => {
+    const apiNodes: WorkflowNode[] = nodes.map((node) => ({
+      id: node.id,
+      type: getApiNodeType(node.data.chipText || "Action") as NodeType,
+      position: node.position,
+      data: {
+        label: node.data.label,
+        serviceType: node.data.subtitle !== "Configure this step"
+          ? node.data.subtitle
+          : undefined,
+        config: node.data.config,
+      },
+    }));
+
+    const apiEdges = edgesRaw.map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      condition: edge.data?.condition,
+    }));
+
+    return { apiNodes, apiEdges };
+  }, [nodes, edgesRaw]);
+
+  // Save workflow
+  const handleSave = useCallback(async () => {
+    if (isSaving) return;
+
+    setIsSaving(true);
+    try {
+      const { apiNodes, apiEdges } = convertToApiFormat();
+
+      if (workflowId) {
+        // Update existing workflow
+        await updateWorkflow.mutateAsync({
+          workflowId,
+          payload: {
+            name: workflowName,
+            description: workflowDescription,
+            nodes: apiNodes,
+            edges: apiEdges,
+          },
+        });
+        alert("Workflow saved successfully!");
+      } else {
+        // Create new workflow
+        const newWorkflow = await createWorkflow.mutateAsync({
+          user_id: "user_demo_001", // TODO: Get from auth context
+          name: workflowName,
+          description: workflowDescription,
+          nodes: apiNodes,
+          edges: apiEdges,
+        });
+
+        // Redirect to edit the new workflow
+        router.push(`/dashboard/workflows?id=${newWorkflow.id}`);
+        alert("Workflow created successfully!");
+      }
+    } catch (error) {
+      console.error("Failed to save workflow:", error);
+      alert("Failed to save workflow");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [
+    workflowId,
+    workflowName,
+    workflowDescription,
+    convertToApiFormat,
+    updateWorkflow,
+    createWorkflow,
+    router,
+    isSaving,
+  ]);
+
+  // Publish workflow
+  const handlePublish = useCallback(async () => {
+    if (!workflowId) {
+      alert("Please save the workflow first");
+      return;
+    }
+
+    if (!validation.isValid) {
+      alert(`Cannot publish: ${validation.errors.join(", ")}`);
+      return;
+    }
+
+    try {
+      await handleSave(); // Save first
+      await publishWorkflow.mutateAsync(workflowId);
+      alert("Workflow published successfully!");
+    } catch (error) {
+      console.error("Failed to publish workflow:", error);
+      alert("Failed to publish workflow");
+    }
+  }, [workflowId, validation, handleSave, publishWorkflow]);
 
   const handleInsertNode = useCallback(
     (edgeId: string) => {
       let createdNodeId: string | null = null;
 
-      setFlowState((prev) => {
-        const current = prev[activeFlowId];
-        if (!current) return prev;
+      setEdgesRaw((prevEdges) => {
+        const edge = prevEdges.find((item) => item.id === edgeId);
+        if (!edge) return prevEdges;
 
-        const edge = current.edges.find((item) => item.id === edgeId);
-        if (!edge) return prev;
-
-        const sourceNode = current.nodes.find((node) =>
-          node.id === edge.source
-        );
-        const targetNode = current.nodes.find((node) =>
-          node.id === edge.target
-        );
-        if (!sourceNode || !targetNode) return prev;
+        const sourceNode = nodes.find((node) => node.id === edge.source);
+        const targetNode = nodes.find((node) => node.id === edge.target);
+        if (!sourceNode || !targetNode) return prevEdges;
 
         const midpointX = sourceNode.position.x +
           (targetNode.position.x - sourceNode.position.x) / 2;
@@ -1263,6 +584,9 @@ function WorkflowsPageContent() {
         const timestamp = Date.now();
         const newNodeId = `step-${timestamp}`;
         createdNodeId = newNodeId;
+
+        // Create standard input/output connectors for inserted nodes
+        const connectors = getDefaultConnectors(newNodeId, "data");
 
         const newNode: FlowNode = {
           id: newNodeId,
@@ -1278,12 +602,14 @@ function WorkflowsPageContent() {
             helperText: "Select to configure this step.",
             config: {},
             configFields: [],
+            connectors,
           },
         };
 
-        const remainingEdges = current.edges.filter((item) =>
-          item.id !== edgeId
-        );
+        // Update nodes
+        setNodes((prevNodes) => [...prevNodes, newNode]);
+
+        const remainingEdges = prevEdges.filter((item) => item.id !== edgeId);
 
         const firstEdge: FlowEdge = {
           id: `${edge.source}-${newNodeId}-${timestamp}`,
@@ -1291,6 +617,7 @@ function WorkflowsPageContent() {
           sourceHandle: edge.sourceHandle,
           target: newNodeId,
           targetHandle: `${newNodeId}-in`,
+          type: "smoothstep",
         };
 
         const secondEdge: FlowEdge = {
@@ -1299,74 +626,38 @@ function WorkflowsPageContent() {
           sourceHandle: `${newNodeId}-out`,
           target: edge.target,
           targetHandle: edge.targetHandle,
+          type: "smoothstep",
         };
 
-        return {
-          ...prev,
-          [activeFlowId]: {
-            ...current,
-            nodes: [...current.nodes, newNode],
-            edges: [...remainingEdges, firstEdge, secondEdge],
-          },
-        };
+        return [...remainingEdges, firstEdge, secondEdge];
       });
 
       if (createdNodeId) {
         setSelectedNodeId(createdNodeId);
       }
     },
-    [activeFlowId, setSelectedNodeId],
+    [nodes, setSelectedNodeId],
   );
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      setFlowState((prev) => {
-        const current = prev[activeFlowId];
-        if (!current) return prev;
-        return {
-          ...prev,
-          [activeFlowId]: {
-            ...current,
-            nodes: applyNodeChanges(changes, current.nodes),
-          },
-        };
-      });
+      setNodes((prevNodes) => applyNodeChanges(changes, prevNodes));
     },
-    [activeFlowId],
+    [],
   );
 
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
-      setFlowState((prev) => {
-        const current = prev[activeFlowId];
-        if (!current) return prev;
-        return {
-          ...prev,
-          [activeFlowId]: {
-            ...current,
-            edges: applyEdgeChanges(changes, current.edges),
-          },
-        };
-      });
+      setEdgesRaw((prevEdges) => applyEdgeChanges(changes, prevEdges));
     },
-    [activeFlowId],
+    [],
   );
 
   const onConnect: OnConnect = useCallback(
     (connection: Connection) => {
-      setFlowState((prev) => {
-        const current = prev[activeFlowId];
-        if (!current) return prev;
-        return {
-          ...prev,
-          [activeFlowId]: {
-            ...current,
-            edges: addEdge(connection, current.edges),
-          },
-        };
-      });
+      setEdgesRaw((prevEdges) => addEdge(connection, prevEdges));
     },
-    [activeFlowId],
+    [],
   );
 
   const handleNodeClick = useCallback((_: unknown, node: FlowNode) => {
@@ -1378,13 +669,8 @@ function WorkflowsPageContent() {
       return;
     }
 
-    const current = flowState[activeFlowId];
-    if (!current) {
-      return;
-    }
-
-    const flowNodes = current.nodes;
-    const flowEdges = current.edges;
+    const flowNodes = nodes;
+    const flowEdges = edgesRaw;
 
     if (flowNodes.length === 0) {
       setSimulationState({
@@ -1434,7 +720,7 @@ function WorkflowsPageContent() {
       status: "success",
       completedAt: new Date().toISOString(),
     }));
-  }, [activeFlowId, flowState, simulationState.status]);
+  }, [nodes, edgesRaw, simulationState.status]);
 
   const decoratedEdges = useMemo(
     () =>
@@ -1468,80 +754,133 @@ function WorkflowsPageContent() {
 
   const updateNodeConfig = useCallback(
     (nodeId: string, fieldId: string, value: string) => {
-      setFlowState((prev) => {
-        const current = prev[activeFlowId];
-        if (!current) return prev;
-        return {
-          ...prev,
-          [activeFlowId]: {
-            ...current,
-            nodes: current.nodes.map((node) =>
-              node.id === nodeId
-                ? {
-                  ...node,
-                  data: {
-                    ...node.data,
-                    config: {
-                      ...node.data.config,
-                      [fieldId]: value,
-                    },
-                  },
-                }
-                : node
-            ),
-          },
-        };
-      });
+      setNodes((prevNodes) =>
+        prevNodes.map((node) =>
+          node.id === nodeId
+            ? {
+              ...node,
+              data: {
+                ...node.data,
+                config: {
+                  ...node.data.config,
+                  [fieldId]: value,
+                },
+              },
+            }
+            : node
+        )
+      );
     },
-    [activeFlowId],
+    [],
   );
 
   const addNodeFromTemplate = useCallback(
     (templateId: string) => {
-      const template = nodeTemplates.find((t) => t.id === templateId);
+      // Find template from backend node types or fallback to local templates
+      let template: NodeTemplate | undefined;
+      let backendNodeDef: NodeTypeDefinition | undefined;
+
+      if (nodeTypesData) {
+        // Search in all backend node type categories
+        const allBackendNodes = [
+          ...nodeTypesData.trigger,
+          ...nodeTypesData.action,
+          ...nodeTypesData.data,
+          ...nodeTypesData.logic,
+          ...nodeTypesData.ai,
+        ];
+        backendNodeDef = allBackendNodes.find((n) => n.id === templateId);
+      }
+
+      // If found in backend, convert to NodeTemplate format
+      if (backendNodeDef) {
+        template = {
+          id: backendNodeDef.id,
+          label: backendNodeDef.label,
+          subtitle: backendNodeDef.service_type || backendNodeDef.description,
+          category: backendNodeDef.category,
+          accent: getAccentForCategory(backendNodeDef.category),
+          icon: getIconForCategory(backendNodeDef.category),
+          chipText: getChipTextForCategory(backendNodeDef.category),
+          description: backendNodeDef.description,
+          defaultConfig: {},
+          configFields: backendNodeDef.fields.map((field) => ({
+            id: field.id,
+            label: field.label,
+            type: field.type === "number"
+              ? "text"
+              : field.type as "text" | "email" | "textarea" | "multi",
+            required: field.required,
+            placeholder: field.placeholder,
+          })),
+        };
+      } else {
+        // Fallback to local template
+        template = nodeTemplates.find((t) => t.id === templateId);
+      }
+
       if (!template) return;
 
       let createdNodeId: string | null = null;
       let newPosition = { x: 50, y: 250 };
 
-      setFlowState((prev) => {
-        const current = prev[activeFlowId];
-        if (!current) return prev;
+      // Find the last node to connect to (Zapier-style sequential linking)
+      const lastNodeInfo = findLastConnectableNode(nodes, edgesRaw);
 
-        const timestamp = Date.now();
-        const newNodeId = `${template.id}-${timestamp}`;
-        createdNodeId = newNodeId;
+      // Calculate position based on last node
+      newPosition = calculateNewNodePosition(lastNodeInfo);
 
-        // Calculate position - place it to the right of last node
-        const lastNode = current.nodes[current.nodes.length - 1];
-        newPosition = lastNode
-          ? { x: lastNode.position.x + 250, y: lastNode.position.y }
-          : { x: 50, y: 250 };
+      const timestamp = Date.now();
+      const newNodeId = `${template.id}-${timestamp}`;
+      createdNodeId = newNodeId;
 
-        const newNode: FlowNode = {
-          id: newNodeId,
-          type: "step",
-          position: newPosition,
-          data: {
-            label: template.label,
-            subtitle: template.subtitle,
-            accent: template.accent,
-            icon: template.icon,
-            chipText: template.chipText,
-            helperText: template.description,
-            config: { ...template.defaultConfig },
-            configFields: template.configFields.map((field) => ({ ...field })),
-          },
-        };
+      // Determine appropriate connectors for this node type
+      const logicType = template.id === "filter"
+        ? "filter"
+        : template.id === "loop"
+        ? "loop"
+        : undefined;
+      const connectors = getDefaultConnectors(
+        newNodeId,
+        template.category,
+        logicType,
+      );
 
-        return {
-          ...prev,
-          [activeFlowId]: {
-            ...current,
-            nodes: [...current.nodes, newNode],
-          },
-        };
-      });
+      const newNode: FlowNode = {
+        id: newNodeId,
+        type: "step",
+        position: newPosition,
+        data: {
+          label: template.label,
+          subtitle: template.subtitle,
+          accent: template.accent,
+          icon: template.icon,
+          chipText: template.chipText,
+          helperText: template.description,
+          config: { ...template.defaultConfig },
+          configFields: template.configFields.map((field) => ({ ...field })),
+          connectors,
+        },
+      };
+
+      // Add the new node
+      setNodes((prevNodes) => [...prevNodes, newNode]);
+
+      // Auto-connect to the last node (Zapier-style)
+      if (lastNodeInfo) {
+        const targetConnector = connectors.find((c) => c.type === "target");
+        if (targetConnector) {
+          const newEdge: FlowEdge = {
+            id: `${lastNodeInfo.node.id}-${newNodeId}-${timestamp}`,
+            source: lastNodeInfo.node.id,
+            sourceHandle: lastNodeInfo.sourceHandle,
+            target: newNodeId,
+            targetHandle: targetConnector.id,
+            type: "smoothstep",
+          };
+          setEdgesRaw((prevEdges) => [...prevEdges, newEdge]);
+        }
+      }
 
       if (createdNodeId) {
         setSelectedNodeId(createdNodeId);
@@ -1554,30 +893,46 @@ function WorkflowsPageContent() {
         }, 100);
       }
     },
-    [activeFlowId, setCenter],
+    [nodes, edgesRaw, nodeTypesData, setCenter],
   );
 
   return (
     <div className="min-h-screen bg-[#0A0B14] text-white">
       <div className="mx-auto flex max-full flex-col gap-6 px-6 py-8">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">
-              Workflow Studio
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm text-white/60">
-              Compose hospital-grade automations by sequencing MCP servers,
-              agentic AI, clinical systems, and communication channels.
-            </p>
+        {/* Header with navigation and actions */}
+        <div className="flex items-start justify-between">
+          <div className="flex items-start gap-4">
+            <Link href="/dashboard/workflows/list">
+              <Button variant="outline" size="sm" className="gap-2">
+                <ArrowLeft className="h-4 w-4" />
+                Back
+              </Button>
+            </Link>
+            <div>
+              <Input
+                value={workflowName}
+                onChange={(e) => setWorkflowName(e.target.value)}
+                className="text-2xl font-bold tracking-tight bg-transparent border-none px-0 h-auto focus-visible:ring-0 focus-visible:ring-offset-0"
+                placeholder="Workflow name"
+              />
+              <Input
+                value={workflowDescription}
+                onChange={(e) => setWorkflowDescription(e.target.value)}
+                className="mt-1 text-sm text-white/60 bg-transparent border-none px-0 h-auto focus-visible:ring-0 focus-visible:ring-offset-0"
+                placeholder="Add a description..."
+              />
+            </div>
           </div>
           <div className="flex items-center gap-3">
-            <Button variant="outline" size="sm" className="gap-2">
-              <GitBranch className="h-4 w-4" />
-              Version history
-            </Button>
-            <Button variant="outline" size="sm" className="gap-2">
-              <Play className="h-4 w-4" />
-              Test run
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={handleSave}
+              disabled={isSaving || isLoadingWorkflow}
+            >
+              <Save className="h-4 w-4" />
+              {isSaving ? "Saving..." : workflowId ? "Save" : "Create"}
             </Button>
             <Button
               variant="outline"
@@ -1589,247 +944,370 @@ function WorkflowsPageContent() {
               <Sparkles className="h-4 w-4" />
               {simulationState.status === "running"
                 ? "Simulating…"
-                : "Simulate execute"}
+                : "Simulate"}
             </Button>
-            <Button size="sm" className="gap-2">
+            <Button
+              size="sm"
+              className="gap-2"
+              onClick={handlePublish}
+              disabled={!validation.isValid || !workflowId || isSaving}
+              title={!validation.isValid
+                ? `Cannot publish: ${validation.errors.length} error(s) must be fixed`
+                : "Publish workflow"}
+            >
               <Save className="h-4 w-4" />
               Publish
+              {validation.errors.length > 0 && (
+                <Badge className="ml-1 h-4 rounded-full bg-red-500/20 px-1.5 text-[10px] text-red-300">
+                  {validation.errors.length}
+                </Badge>
+              )}
             </Button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_320px]">
-          <Card className="border-white/10 bg-[#101322]">
-            <CardContent className="h-[76vh] overflow-hidden rounded-2xl border border-white/5 bg-[#0C0F1C]">
-              <div className="relative h-full">
-                <svg width="0" height="0" className="absolute">
-                  <defs>
-                    <marker
-                      id={EDGE_MARKER_ID}
-                      markerWidth="20"
-                      markerHeight="20"
-                      viewBox="0 0 20 20"
-                      refX="18"
-                      refY="10"
-                      orient="auto"
-                      markerUnits="strokeWidth"
+        {/* Loading state */}
+        {isLoadingWorkflow && workflowId && (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]" />
+              <p className="mt-4 text-sm text-white/60">Loading workflow...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Main content */}
+        {(!isLoadingWorkflow || !workflowId) && (
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_320px]">
+            <div className="space-y-4">
+              <FlowValidation nodes={nodes} edges={decoratedEdges} />
+
+              <Card className="border-white/10 bg-[#101322]">
+                <CardContent className="h-[76vh] overflow-hidden rounded-2xl border border-white/5 bg-[#0C0F1C]">
+                  <div className="relative h-full">
+                    <svg width="0" height="0" className="absolute">
+                      <defs>
+                        <marker
+                          id={EDGE_MARKER_ID}
+                          markerWidth="20"
+                          markerHeight="20"
+                          viewBox="0 0 20 20"
+                          refX="18"
+                          refY="10"
+                          orient="auto"
+                          markerUnits="strokeWidth"
+                        >
+                          <path
+                            d="M4 4 L4 16 L16 10 Z"
+                            fill="#7F8BFF"
+                            stroke="#7F8BFF"
+                            strokeWidth="1"
+                            strokeLinejoin="round"
+                          />
+                        </marker>
+                      </defs>
+                    </svg>
+                    <ReactFlow
+                      nodes={nodes}
+                      edges={decoratedEdges}
+                      edgeTypes={edgeTypes}
+                      nodeTypes={nodeTypes}
+                      onNodesChange={onNodesChange}
+                      onEdgesChange={onEdgesChange}
+                      onConnect={onConnect}
+                      onNodeClick={handleNodeClick}
+                      fitView
+                      className="react-flow-dark"
                     >
-                      <path
-                        d="M4 4 L4 16 L16 10 Z"
-                        fill="#7F8BFF"
-                        stroke="#7F8BFF"
-                        strokeWidth="1"
-                        strokeLinejoin="round"
+                      <Background gap={20} size={1} color="#1E2236" />
+                      <MiniMap
+                        className="!bg-[#0F1324]"
+                        pannable
+                        zoomable
+                        nodeColor={minimapNodeColor}
                       />
-                    </marker>
-                  </defs>
-                </svg>
-                <ReactFlow
-                  nodes={nodes}
-                  edges={decoratedEdges}
-                  edgeTypes={edgeTypes}
-                  nodeTypes={nodeTypes}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onConnect={onConnect}
-                  onNodeClick={handleNodeClick}
-                  fitView
-                  className="react-flow-dark"
-                >
-                  <Background gap={20} size={1} color="#1E2236" />
-                  <MiniMap
-                    className="!bg-[#0F1324]"
-                    pannable
-                    zoomable
-                    nodeColor={minimapNodeColor}
-                  />
-                  <Controls className="border-white/10 bg-[#11152A]/80 text-white" />
-                </ReactFlow>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-white/10 bg-[#101322]">
-            <CardHeader className="pb-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-base">
-                    {selectedNode ? "Configuration" : "Add Node"}
-                  </CardTitle>
-                  <CardDescription>
-                    {selectedNode
-                      ? selectedNode.data.label
-                      : "Click to add to canvas"}
-                  </CardDescription>
-                </div>
-                {selectedNode && (
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setSelectedNodeId(null)}
-                      className="h-8 w-8 p-0 text-white/60 hover:text-white"
-                      title="Close"
-                    >
-                      <Plus className="h-4 w-4 rotate-45" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 gap-2 px-2 text-xs text-red-300"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Delete
-                    </Button>
+                      <Controls className="border-white/10 bg-[#11152A]/80 text-white" />
+                    </ReactFlow>
                   </div>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {selectedNode
-                ? (
-                  <>
-                    <div className="rounded-2xl border border-white/10 bg-[#0C0F1C] px-4 py-3">
-                      <p className="text-sm font-semibold text-white">
-                        {selectedNode.data.label}
-                      </p>
-                      <p className="text-xs text-white/50">
-                        {selectedNode.data.subtitle}
-                      </p>
-                      {selectedNode.data.helperText
-                        ? (
-                          <div className="mt-3 flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">
-                            <Sparkles className="h-3.5 w-3.5 text-white/50" />
-                            {selectedNode.data.helperText}
-                          </div>
-                        )
-                        : null}
-                    </div>
+                </CardContent>
+              </Card>
+            </div>
 
-                    <div className="space-y-4">
-                      {selectedNode.data.configFields?.map((field) => {
-                        const value = selectedNode.data.config[field.id] ?? "";
-                        return (
-                          <div key={field.id}>
-                            <label className="block text-xs font-semibold uppercase tracking-wide text-white/50">
-                              {field.label}
-                              {field.required
-                                ? <span className="text-rose-300">*</span>
+            <Card className="border-white/10 bg-[#101322]">
+              <CardHeader className="pb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">
+                      {selectedNode ? "Configuration" : "Add Node"}
+                    </CardTitle>
+                    <CardDescription>
+                      {selectedNode
+                        ? selectedNode.data.label
+                        : "Click to add to canvas"}
+                    </CardDescription>
+                  </div>
+                  {selectedNode && (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setSelectedNodeId(null)}
+                        className="h-8 w-8 p-0 text-white/60 hover:text-white"
+                        title="Close"
+                      >
+                        <Plus className="h-4 w-4 rotate-45" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-2 px-2 text-xs text-red-300"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {selectedNode
+                  ? (
+                    <>
+                      <div className="rounded-2xl border border-white/10 bg-[#0C0F1C] px-4 py-3">
+                        <p className="text-sm font-semibold text-white">
+                          {selectedNode.data.label}
+                        </p>
+                        <p className="text-xs text-white/50">
+                          {selectedNode.data.subtitle}
+                        </p>
+                        {selectedNode.data.helperText
+                          ? (
+                            <div className="mt-3 flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">
+                              <Sparkles className="h-3.5 w-3.5 text-white/50" />
+                              {selectedNode.data.helperText}
+                            </div>
+                          )
+                          : null}
+                      </div>
+
+                      <div className="space-y-4">
+                        {selectedNode.data.configFields?.map((field) => {
+                          const value = selectedNode.data.config[field.id] ??
+                            "";
+                          return (
+                            <div key={field.id}>
+                              <label className="block text-xs font-semibold uppercase tracking-wide text-white/50">
+                                {field.label}
+                                {field.required
+                                  ? <span className="text-rose-300">*</span>
+                                  : null}
+                              </label>
+                              {field.helperText
+                                ? (
+                                  <p className="mt-0.5 text-[11px] text-white/35">
+                                    {field.helperText}
+                                  </p>
+                                )
                                 : null}
-                            </label>
-                            {field.helperText
-                              ? (
-                                <p className="mt-0.5 text-[11px] text-white/35">
-                                  {field.helperText}
-                                </p>
-                              )
-                              : null}
-                            {field.type === "textarea"
-                              ? (
-                                <textarea
-                                  value={value}
-                                  onChange={(event) =>
-                                    updateNodeConfig(
-                                      selectedNode.id,
-                                      field.id,
-                                      event.target.value,
-                                    )}
-                                  placeholder={field.placeholder}
-                                  className="mt-2 min-h-[120px] w-full rounded-xl border border-white/12 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
-                                />
-                              )
-                              : (
-                                <Input
-                                  type={field.type === "multi"
-                                    ? "text"
-                                    : field.type}
-                                  value={value}
-                                  placeholder={field.placeholder}
-                                  onChange={(event) =>
-                                    updateNodeConfig(
-                                      selectedNode.id,
-                                      field.id,
-                                      event.target.value,
-                                    )}
-                                  className="mt-2"
-                                />
-                              )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </>
-                )
-                : (
-                  <div className="max-h-[68vh] space-y-3 overflow-y-auto pr-2">
-                    {["trigger", "data", "logic", "ai", "action"].map(
-                      (category) => {
-                        const categoryNodes = nodeTemplates.filter(
-                          (template) => template.category === category,
-                        );
-
-                        if (categoryNodes.length === 0) return null;
-
-                        return (
-                          <div key={category}>
-                            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">
-                              {category}
-                            </h3>
-                            <div className="space-y-2">
-                              {categoryNodes.map((template) => {
-                                const Icon = template.icon;
-                                const accent = accentStyles[template.accent];
-
-                                return (
-                                  <button
-                                    key={template.id}
-                                    onClick={() =>
-                                      addNodeFromTemplate(template.id)}
-                                    className="group w-full rounded-xl border border-white/10 bg-[#0C0F1C] p-3 text-left transition-all hover:border-white/20 hover:bg-[#121527]"
-                                  >
-                                    <div className="flex items-start gap-3">
-                                      <div
-                                        className={cn(
-                                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
-                                          accent.icon,
-                                        )}
-                                      >
-                                        <Icon className="h-4 w-4" />
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                          <p className="text-sm font-semibold text-white">
-                                            {template.label}
-                                          </p>
-                                          <Badge
-                                            className={cn(
-                                              "h-5 rounded-md px-2 text-[10px] font-medium",
-                                              accent.chip,
-                                            )}
-                                          >
-                                            {template.chipText}
-                                          </Badge>
-                                        </div>
-                                        <p className="mt-0.5 text-xs text-white/50">
-                                          {template.subtitle}
-                                        </p>
-                                        <p className="mt-1 text-xs text-white/40">
-                                          {template.description}
-                                        </p>
-                                      </div>
-                                    </div>
-                                  </button>
-                                );
-                              })}
+                              {field.type === "textarea"
+                                ? (
+                                  <textarea
+                                    value={value}
+                                    onChange={(event) =>
+                                      updateNodeConfig(
+                                        selectedNode.id,
+                                        field.id,
+                                        event.target.value,
+                                      )}
+                                    placeholder={field.placeholder}
+                                    className="mt-2 min-h-[120px] w-full rounded-xl border border-white/12 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
+                                  />
+                                )
+                                : (
+                                  <Input
+                                    type={field.type === "multi"
+                                      ? "text"
+                                      : field.type}
+                                    value={value}
+                                    placeholder={field.placeholder}
+                                    onChange={(event) =>
+                                      updateNodeConfig(
+                                        selectedNode.id,
+                                        field.id,
+                                        event.target.value,
+                                      )}
+                                    className="mt-2"
+                                  />
+                                )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )
+                  : (
+                    <div className="max-h-[68vh] space-y-3 overflow-y-auto pr-2">
+                      {isLoadingNodeTypes
+                        ? (
+                          <div className="flex items-center justify-center py-8">
+                            <div className="text-center">
+                              <div className="inline-block h-6 w-6 animate-spin rounded-full border-3 border-solid border-current border-r-transparent" />
+                              <p className="mt-2 text-xs text-white/40">
+                                Loading node types...
+                              </p>
                             </div>
                           </div>
-                        );
-                      },
-                    )}
-                  </div>
-                )}
-            </CardContent>
-          </Card>
-        </div>
+                        )
+                        : nodeTypesData
+                        ? (
+                          // Render backend node types
+                          ["trigger", "data", "logic", "ai", "action"].map(
+                            (category) => {
+                              const categoryKey =
+                                category as keyof typeof nodeTypesData;
+                              const categoryNodes =
+                                nodeTypesData[categoryKey] || [];
+
+                              if (categoryNodes.length === 0) return null;
+
+                              return (
+                                <div key={category}>
+                                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">
+                                    {category}
+                                  </h3>
+                                  <div className="space-y-2">
+                                    {categoryNodes.map((nodeDef) => {
+                                      const Icon = getIconForCategory(
+                                        nodeDef.category,
+                                      );
+                                      const accent = accentStyles[
+                                        getAccentForCategory(nodeDef.category)
+                                      ];
+
+                                      return (
+                                        <button
+                                          key={nodeDef.id}
+                                          onClick={() =>
+                                            addNodeFromTemplate(nodeDef.id)}
+                                          className="group w-full rounded-xl border border-white/10 bg-[#0C0F1C] p-3 text-left transition-all hover:border-white/20 hover:bg-[#121527]"
+                                        >
+                                          <div className="flex items-start gap-3">
+                                            <div
+                                              className={cn(
+                                                "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
+                                                accent.icon,
+                                              )}
+                                            >
+                                              <Icon className="h-4 w-4" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2">
+                                                <p className="text-sm font-semibold text-white">
+                                                  {nodeDef.label}
+                                                </p>
+                                                <Badge
+                                                  className={cn(
+                                                    "h-5 rounded-md px-2 text-[10px] font-medium",
+                                                    accent.chip,
+                                                  )}
+                                                >
+                                                  {getChipTextForCategory(
+                                                    nodeDef.category,
+                                                  )}
+                                                </Badge>
+                                              </div>
+                                              {nodeDef.service_type && (
+                                                <p className="mt-0.5 text-xs text-white/50">
+                                                  {nodeDef.service_type}
+                                                </p>
+                                              )}
+                                              <p className="mt-1 text-xs text-white/40">
+                                                {nodeDef.description}
+                                              </p>
+                                            </div>
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            },
+                          )
+                        )
+                        : (
+                          // Fallback to local templates if backend fails
+                          ["trigger", "data", "logic", "ai", "action"].map(
+                            (category) => {
+                              const categoryNodes = nodeTemplates.filter(
+                                (template) => template.category === category,
+                              );
+
+                              if (categoryNodes.length === 0) return null;
+
+                              return (
+                                <div key={category}>
+                                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">
+                                    {category}
+                                  </h3>
+                                  <div className="space-y-2">
+                                    {categoryNodes.map((template) => {
+                                      const Icon = template.icon;
+                                      const accent =
+                                        accentStyles[template.accent];
+
+                                      return (
+                                        <button
+                                          key={template.id}
+                                          onClick={() =>
+                                            addNodeFromTemplate(template.id)}
+                                          className="group w-full rounded-xl border border-white/10 bg-[#0C0F1C] p-3 text-left transition-all hover:border-white/20 hover:bg-[#121527]"
+                                        >
+                                          <div className="flex items-start gap-3">
+                                            <div
+                                              className={cn(
+                                                "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
+                                                accent.icon,
+                                              )}
+                                            >
+                                              <Icon className="h-4 w-4" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                              <div className="flex items-center gap-2">
+                                                <p className="text-sm font-semibold text-white">
+                                                  {template.label}
+                                                </p>
+                                                <Badge
+                                                  className={cn(
+                                                    "h-5 rounded-md px-2 text-[10px] font-medium",
+                                                    accent.chip,
+                                                  )}
+                                                >
+                                                  {template.chipText}
+                                                </Badge>
+                                              </div>
+                                              <p className="mt-0.5 text-xs text-white/50">
+                                                {template.subtitle}
+                                              </p>
+                                              <p className="mt-1 text-xs text-white/40">
+                                                {template.description}
+                                              </p>
+                                            </div>
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            },
+                          )
+                        )}
+                    </div>
+                  )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -18,8 +18,10 @@ model User {
   updatedAt DateTime @updatedAt
 
   // Relations
-  chats     Chat[]
+  chats             Chat[]
   mcpConfigurations UserMcpConfiguration[]
+  connections       Connection[]
+  workflows         Workflow[]
 
   @@map("users")
 }
@@ -32,21 +34,21 @@ model Chat {
   updatedAt DateTime @updatedAt
 
   // Relations
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages  Message[]
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
 
   @@map("chats")
 }
 
 model Message {
   id        String   @id @default(cuid())
-  role      String   // "user" or "assistant"
+  role      String // "user" or "assistant"
   content   String
   chatId    String
   createdAt DateTime @default(now())
 
   // Relations
-  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
   @@map("messages")
 }
@@ -76,24 +78,128 @@ model McpServerDefinition {
 }
 
 model UserMcpConfiguration {
-  id               String                 @id @default(cuid())
-  userId           String
-  serverId         String
-  displayName      String
-  status           McpConfigurationStatus @default(DRAFT)
-  configValues     Json
-  metadata         Json?
-  lastStatusChange DateTime?              @map("last_status_change")
-  lastStatusMessage String?               @map("last_status_message")
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  id                String                 @id @default(cuid())
+  userId            String
+  serverId          String
+  displayName       String
+  status            McpConfigurationStatus @default(DRAFT)
+  configValues      Json
+  metadata          Json?
+  lastStatusChange  DateTime?              @map("last_status_change")
+  lastStatusMessage String?                @map("last_status_message")
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
 
   // Relations
-  user   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   server McpServerDefinition @relation(fields: [serverId], references: [id], onDelete: Cascade)
 
   @@unique([userId, serverId, displayName], name: "user_server_display_name_unique")
   @@index([userId])
   @@index([serverId])
   @@map("user_mcp_configurations")
+}
+
+// ============= WORKFLOW SYSTEM =============
+
+enum AuthType {
+  OAUTH2
+  API_KEY
+  BASIC_AUTH
+  BEARER_TOKEN
+  CLIENT_CREDENTIALS
+  SSH_KEY
+  CUSTOM
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  EXPIRED
+  ERROR
+  REVOKED
+}
+
+model Connection {
+  id           String           @id @default(cuid())
+  userId       String
+  serviceType  String // "gmail", "google-sheets", "epic", "pubmed"
+  displayName  String // "John's Hospital Gmail"
+  authType     AuthType         @default(OAUTH2) // Authentication method
+  authConfig   Json? // Auth-specific config (scopes, endpoints)
+  status       ConnectionStatus @default(ACTIVE)
+  credentials  String // Encrypted JSON with OAuth tokens or API keys
+  metadata     Json? // Account info, scopes, email, etc.
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  lastTestedAt DateTime?
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, serviceType, displayName])
+  @@index([userId])
+  @@index([serviceType])
+  @@index([authType])
+  @@index([status])
+  @@map("connections")
+}
+
+enum WorkflowStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+  ARCHIVED
+}
+
+model Workflow {
+  id          String         @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  status      WorkflowStatus @default(DRAFT)
+  category    String? // "Clinical safety", "Care navigation", etc.
+  nodes       Json // Array of workflow nodes
+  edges       Json // Array of workflow edges
+  metadata    Json? // Schedule config, tags, etc.
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  publishedAt DateTime?
+
+  // Relations
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  executions WorkflowExecution[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("workflows")
+}
+
+enum ExecutionStatus {
+  QUEUED
+  RUNNING
+  SUCCESS
+  ERROR
+  CANCELLED
+  PARTIAL
+}
+
+model WorkflowExecution {
+  id          String          @id @default(cuid())
+  workflowId  String
+  status      ExecutionStatus @default(QUEUED)
+  startedAt   DateTime        @default(now())
+  completedAt DateTime?
+  error       String?         @db.Text
+  logs        Json? // Execution logs per node
+  nodeResults Json? // Results from each node
+  metadata    Json? // Trigger info, context, etc.
+
+  // Relations
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("workflow_executions")
 }

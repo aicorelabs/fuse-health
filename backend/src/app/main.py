@@ -7,7 +7,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .services import database, mcp_configuration_service
-from .views import chat_routes, health_routes, mcp_configuration_routes
+from .views import (
+    chat_routes,
+    connection_routes,
+    health_routes,
+    mcp_configuration_routes,
+    oauth_routes,
+    service_routes,
+    workflow_routes,
+    workflow_analytics_routes,
+)
 
 
 @asynccontextmanager
@@ -33,5 +42,10 @@ app.add_middleware(
 app.include_router(chat_routes.router)
 app.include_router(health_routes.router)
 app.include_router(mcp_configuration_routes.router)
+app.include_router(connection_routes.router)
+app.include_router(service_routes.router)
+app.include_router(oauth_routes.router)
+app.include_router(workflow_analytics_routes.router)
+app.include_router(workflow_routes.router)
 
 __all__ = ["app"]

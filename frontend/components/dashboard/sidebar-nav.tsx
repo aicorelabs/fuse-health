@@ -7,9 +7,11 @@ import {
   BarChart3,
   GitBranch,
   KeyRound,
+  Link as LinkIcon,
   MessageSquareText,
   Settings,
   SlidersHorizontal,
+  TrendingUp,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -41,6 +43,12 @@ const navItems: NavItem[] = [
     icon: SlidersHorizontal,
   },
   {
+    title: "Connections",
+    description: "Manage service connections and credentials.",
+    href: "/dashboard/connections",
+    icon: LinkIcon,
+  },
+  {
     title: "API key creation",
     description: "Provision, rotate, and revoke credentials.",
     href: "/dashboard/api-key-creation",
@@ -49,8 +57,14 @@ const navItems: NavItem[] = [
   {
     title: "Workflows",
     description: "Design automation sequences and triggers.",
-    href: "/dashboard/workflows",
+    href: "/dashboard/workflows/list",
     icon: GitBranch,
+  },
+  {
+    title: "Workflow analytics",
+    description: "Track execution trends and performance.",
+    href: "/dashboard/workflow-analytics",
+    icon: TrendingUp,
   },
   {
     title: "Settings",
@@ -88,7 +102,7 @@ export function SidebarNav() {
                   "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
                   isActive
                     ? "bg-white/10 text-white"
-                    : "text-white/60 hover:bg-white/5 hover:text-white"
+                    : "text-white/60 hover:bg-white/5 hover:text-white",
                 )}
               >
                 <Icon className="h-4 w-4" strokeWidth={1.6} />

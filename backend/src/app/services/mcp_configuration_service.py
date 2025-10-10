@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
+from prisma import fields
 
 from ..models.mcp import (
     ConfigField,
@@ -19,7 +20,7 @@ from ..models.mcp import (
 from . import database
 
 DEMO_USER = {
-    "id": "demo-user",
+    "id": "user_demo_001",
     "email": "demo@fuse.health",
     "name": "Demo User",
 }
@@ -31,9 +32,12 @@ DEFAULT_SERVER_DEFINITIONS: List[Dict[str, Any]] = [
         "description": "Access medical literature and research papers",
         "category": "research",
         "configFields": [
-            {"key": "api_key", "label": "API Key", "type": "password", "required": True, "isSecret": True},
-            {"key": "max_results", "label": "Max Results", "type": "number", "required": False, "defaultValue": "10"},
-            {"key": "language", "label": "Language", "type": "text", "required": False, "defaultValue": "en"},
+            {"key": "api_key", "label": "API Key", "type": "password",
+                "required": True, "isSecret": True},
+            {"key": "max_results", "label": "Max Results",
+                "type": "number", "required": False, "defaultValue": "10"},
+            {"key": "language", "label": "Language", "type": "text",
+                "required": False, "defaultValue": "en"},
         ],
     },
     {
@@ -42,10 +46,14 @@ DEFAULT_SERVER_DEFINITIONS: List[Dict[str, Any]] = [
         "description": "Send and manage emails through Gmail",
         "category": "communication",
         "configFields": [
-            {"key": "client_id", "label": "Client ID", "type": "text", "required": True},
-            {"key": "client_secret", "label": "Client Secret", "type": "password", "required": True, "isSecret": True},
-            {"key": "refresh_token", "label": "Refresh Token", "type": "password", "required": True, "isSecret": True},
-            {"key": "sender_email", "label": "Sender Email", "type": "email", "required": True},
+            {"key": "client_id", "label": "Client ID",
+                "type": "text", "required": True},
+            {"key": "client_secret", "label": "Client Secret",
+                "type": "password", "required": True, "isSecret": True},
+            {"key": "refresh_token", "label": "Refresh Token",
+                "type": "password", "required": True, "isSecret": True},
+            {"key": "sender_email", "label": "Sender Email",
+                "type": "email", "required": True},
         ],
     },
     {
@@ -54,10 +62,14 @@ DEFAULT_SERVER_DEFINITIONS: List[Dict[str, Any]] = [
         "description": "Connect to Epic Electronic Health Records",
         "category": "clinical",
         "configFields": [
-            {"key": "fhir_endpoint", "label": "FHIR Endpoint URL", "type": "url", "required": True},
-            {"key": "client_id", "label": "Client ID", "type": "text", "required": True},
-            {"key": "client_secret", "label": "Client Secret", "type": "password", "required": True, "isSecret": True},
-            {"key": "tenant_id", "label": "Tenant ID", "type": "text", "required": False},
+            {"key": "fhir_endpoint", "label": "FHIR Endpoint URL",
+                "type": "url", "required": True},
+            {"key": "client_id", "label": "Client ID",
+                "type": "text", "required": True},
+            {"key": "client_secret", "label": "Client Secret",
+                "type": "password", "required": True, "isSecret": True},
+            {"key": "tenant_id", "label": "Tenant ID",
+                "type": "text", "required": False},
         ],
     },
 ]
@@ -107,7 +119,8 @@ def _serialize_status(value: Optional[str]) -> McpConfigurationStatus:
 def _serialize_user_configuration(record: Any) -> UserMcpConfigurationResponse:
     server_record = getattr(record, "server", None)
     if server_record is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Missing server relation")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Missing server relation")
 
     return UserMcpConfigurationResponse(
         id=record.id,
@@ -121,7 +134,8 @@ def _serialize_user_configuration(record: Any) -> UserMcpConfigurationResponse:
         last_status_message=getattr(record, "lastStatusMessage", None),
         created_at=_serialize_datetime(getattr(record, "createdAt", None)),
         updated_at=_serialize_datetime(getattr(record, "updatedAt", None)),
-        last_status_change=_serialize_datetime(getattr(record, "lastStatusChange", None)),
+        last_status_change=_serialize_datetime(
+            getattr(record, "lastStatusChange", None)),
     )
 
 
@@ -136,35 +150,59 @@ async def ensure_default_server_definitions() -> None:
                     "displayName": definition["displayName"],
                     "description": definition.get("description"),
                     "category": definition.get("category"),
-                    "configSchema": definition.get("configFields", []),
+                    # Wrap JSON payloads to satisfy Prisma Json input type
+                    "configSchema": fields.Json(definition.get("configFields", [])),
                     "isManaged": True,
                 },
                 "update": {
                     "displayName": definition["displayName"],
                     "description": definition.get("description"),
                     "category": definition.get("category"),
-                    "configSchema": definition.get("configFields", []),
+                    "configSchema": fields.Json(definition.get("configFields", [])),
                 },
             },
         )
 
 
 async def ensure_demo_user() -> None:
+    """Ensure demo user exists, handling migration from old ID."""
     client = await database.connect()
-    await client.user.upsert(
-        where={"id": DEMO_USER["id"]},
-        data={
-            "create": {
+
+    # First, try to find user by email
+    existing_user = await client.user.find_unique(where={"email": DEMO_USER["email"]})
+
+    if existing_user:
+        # User exists with this email
+        if existing_user.id != DEMO_USER["id"]:
+            # Old user ID exists, delete it and create new one
+            print(
+                f"Migrating user from {existing_user.id} to {DEMO_USER['id']}")
+            await client.user.delete(where={"id": existing_user.id})
+            await client.user.create(
+                data={
+                    "id": DEMO_USER["id"],
+                    "email": DEMO_USER["email"],
+                    "name": DEMO_USER["name"],
+                }
+            )
+        else:
+            # User exists with correct ID, just update
+            await client.user.update(
+                where={"id": DEMO_USER["id"]},
+                data={
+                    "email": DEMO_USER["email"],
+                    "name": DEMO_USER["name"],
+                },
+            )
+    else:
+        # No user with this email, create new one
+        await client.user.create(
+            data={
                 "id": DEMO_USER["id"],
                 "email": DEMO_USER["email"],
                 "name": DEMO_USER["name"],
-            },
-            "update": {
-                "email": DEMO_USER["email"],
-                "name": DEMO_USER["name"],
-            },
-        },
-    )
+            }
+        )
 
 
 async def initialize_seed_data() -> None:
@@ -188,11 +226,12 @@ async def create_server_definition(payload: McpServerDefinitionCreate) -> McpSer
                 "description": payload.description,
                 "category": payload.category,
                 "isManaged": payload.is_managed,
-                "configSchema": [field.model_dump(by_alias=True) for field in payload.config_fields],
+                "configSchema": fields.Json([field.model_dump(by_alias=True) for field in payload.config_fields]),
             }
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return _serialize_definition(record)
 
 
@@ -208,10 +247,12 @@ async def update_server_definition(definition_id: str, payload: McpServerDefinit
     if payload.is_managed is not None:
         data["isManaged"] = payload.is_managed
     if payload.config_fields is not None:
-        data["configSchema"] = [field.model_dump(by_alias=True) for field in payload.config_fields]
+        data["configSchema"] = fields.Json(
+            [field.model_dump(by_alias=True) for field in payload.config_fields])
 
     if not data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided for update")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No fields provided for update")
 
     try:
         record = await client.mcpserverdefinition.update(
@@ -219,7 +260,8 @@ async def update_server_definition(definition_id: str, payload: McpServerDefinit
             data=data,
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server definition not found") from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Server definition not found") from exc
 
     return _serialize_definition(record)
 
@@ -229,7 +271,8 @@ async def delete_server_definition(definition_id: str) -> None:
     try:
         await client.mcpserverdefinition.delete(where={"id": definition_id})
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server definition not found") from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Server definition not found") from exc
 
 
 def _status_to_db(status_value: Optional[McpConfigurationStatus]) -> Optional[str]:
@@ -251,7 +294,8 @@ async def list_user_configurations(user_id: str) -> List[UserMcpConfigurationRes
 async def create_user_configuration(payload: UserMcpConfigurationCreate) -> UserMcpConfigurationResponse:
     client = await database.connect()
     if not payload.user_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="user_id is required")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="user_id is required")
     try:
         record = await client.usermcpconfiguration.create(
             data={
@@ -259,14 +303,16 @@ async def create_user_configuration(payload: UserMcpConfigurationCreate) -> User
                 "serverId": payload.server_id,
                 "displayName": payload.display_name,
                 "status": _status_to_db(payload.status) or McpConfigurationStatus.DRAFT.name,
-                "configValues": payload.config_values,
-                "metadata": payload.metadata,
+                # Ensure JSON types are wrapped for Prisma
+                "configValues": fields.Json(payload.config_values or {}),
+                "metadata": fields.Json(payload.metadata) if payload.metadata is not None else None,
                 "lastStatusMessage": payload.last_status_message,
             },
             include={"server": True},
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return _serialize_user_configuration(record)
 
 
@@ -277,7 +323,8 @@ async def get_user_configuration(configuration_id: str, user_id: Optional[str] =
         include={"server": True},
     )
     if record is None or (user_id and record.userId != user_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Configuration not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Configuration not found")
     return _serialize_user_configuration(record)
 
 
@@ -290,14 +337,15 @@ async def update_user_configuration(configuration_id: str, payload: UserMcpConfi
         data["status"] = _status_to_db(payload.status)
         data["lastStatusChange"] = datetime.utcnow()
     if payload.config_values is not None:
-        data["configValues"] = payload.config_values
+        data["configValues"] = fields.Json(payload.config_values)
     if payload.metadata is not None:
-        data["metadata"] = payload.metadata
+        data["metadata"] = fields.Json(payload.metadata)
     if payload.last_status_message is not None:
         data["lastStatusMessage"] = payload.last_status_message
 
     if not data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields provided for update")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No fields provided for update")
 
     try:
         record = await client.usermcpconfiguration.update(
@@ -306,10 +354,12 @@ async def update_user_configuration(configuration_id: str, payload: UserMcpConfi
             include={"server": True},
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Configuration not found") from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Configuration not found") from exc
 
     if user_id and record.userId != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Configuration does not belong to user")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Configuration does not belong to user")
 
     return _serialize_user_configuration(record)
 
@@ -318,6 +368,7 @@ async def delete_user_configuration(configuration_id: str, user_id: Optional[str
     client = await database.connect()
     record = await client.usermcpconfiguration.find_unique(where={"id": configuration_id})
     if record is None or (user_id and record.userId != user_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Configuration not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Configuration not found")
 
     await client.usermcpconfiguration.delete(where={"id": configuration_id})
