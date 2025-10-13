@@ -1,0 +1,235 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  chats             Chat[]
+  mcpConfigurations UserMcpConfiguration[]
+  integrations      Integration[]
+  workflows         Workflow[]
+
+  @@map("users")
+}
+
+model Chat {
+  id        String   @id @default(cuid())
+  title     String?
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@map("chats")
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  role      String // "user" or "assistant"
+  content   String
+  chatId    String
+  createdAt DateTime @default(now())
+
+  // Relations
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+enum McpConfigurationStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+  DRAFT
+}
+
+model McpServerDefinition {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  displayName  String
+  description  String?
+  category     String?
+  isManaged    Boolean  @default(true)
+  configSchema Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  configurations UserMcpConfiguration[]
+
+  @@map("mcp_server_definitions")
+}
+
+model UserMcpConfiguration {
+  id                String                 @id @default(cuid())
+  userId            String
+  serverId          String
+  displayName       String
+  status            McpConfigurationStatus @default(DRAFT)
+  configValues      Json
+  metadata          Json?
+  lastStatusChange  DateTime?              @map("last_status_change")
+  lastStatusMessage String?                @map("last_status_message")
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  // Relations
+  user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  server McpServerDefinition @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, serverId, displayName], name: "user_server_display_name_unique")
+  @@index([userId])
+  @@index([serverId])
+  @@map("user_mcp_configurations")
+}
+
+// ============= WORKFLOW SYSTEM =============
+
+enum AuthType {
+  OAUTH2
+  API_KEY
+  BASIC_AUTH
+  BEARER_TOKEN
+  CLIENT_CREDENTIALS
+  SSH_KEY
+  NONE // For public APIs that don't require auth
+}
+
+enum IntegrationStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+  ERROR
+  REVOKED
+}
+
+enum IntegrationCategory {
+  HEALTHCARE
+  COMMUNICATION
+  AI
+  DATA
+  PRODUCTIVITY
+  STORAGE
+  WEB
+  OTHER
+}
+
+model Integration {
+  id     String @id @default(cuid())
+  userId String
+
+  // Connector Information
+  connectorId String // "gmail", "openfda", "rxnorm", "slack"
+  displayName String // User-friendly name "John's Gmail"
+  category    IntegrationCategory // Category for organization
+
+  // Authentication
+  authType   AuthType // How to authenticate
+  authConfig Json? // Auth-specific config (scopes, endpoints, etc.)
+
+  // Credentials (always encrypted)
+  encryptedData String @db.Text // Fernet encrypted JSON with all credentials
+
+  // OAuth-specific fields (for OAuth2 integrations)
+  accessToken    String?   @db.Text // Current access token
+  refreshToken   String?   @db.Text // Refresh token for token renewal
+  tokenExpiresAt DateTime? // When access token expires
+
+  // Status & Metadata
+  status   IntegrationStatus @default(ACTIVE)
+  metadata Json? // Connector-specific metadata (account info, etc.)
+
+  // Timestamps
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastValidated DateTime? // Last time credentials were tested
+  lastUsed      DateTime? // Last time used in workflow execution
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, connectorId, displayName])
+  @@index([userId])
+  @@index([connectorId])
+  @@index([category])
+  @@index([status])
+  @@index([authType])
+  @@map("integrations")
+}
+
+enum WorkflowStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+  ARCHIVED
+}
+
+model Workflow {
+  id          String         @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  status      WorkflowStatus @default(DRAFT)
+  category    String? // "Clinical safety", "Care navigation", etc.
+  nodes       Json // Array of workflow nodes
+  edges       Json // Array of workflow edges
+  metadata    Json? // Schedule config, tags, etc.
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  publishedAt DateTime?
+
+  // Relations
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  executions WorkflowExecution[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("workflows")
+}
+
+enum ExecutionStatus {
+  QUEUED
+  RUNNING
+  SUCCESS
+  ERROR
+  CANCELLED
+  PARTIAL
+}
+
+model WorkflowExecution {
+  id          String          @id @default(cuid())
+  workflowId  String
+  status      ExecutionStatus @default(QUEUED)
+  startedAt   DateTime        @default(now())
+  completedAt DateTime?
+  error       String?         @db.Text
+  logs        Json? // Execution logs per node
+  nodeResults Json? // Results from each node
+  metadata    Json? // Trigger info, context, etc.
+
+  // Relations
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("workflow_executions")
+}

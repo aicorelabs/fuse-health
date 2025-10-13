@@ -3,26 +3,37 @@
 import { useMutation, useQuery, UseMutationOptions, UseQueryOptions } from "@tanstack/react-query";
 import {
   createTask,
+  createUserMcpConfiguration,
   fetchServerOverview,
+  fetchMcpServerDefinitions,
+  fetchUserMcpConfigurations,
   fetchTasks,
   postChat,
   postExecute,
+  updateUserMcpConfiguration,
   updateTaskStatus,
+  deleteUserMcpConfiguration,
 } from "./endpoints";
 import type {
   ChatRequestPayload,
   ChatResponsePayload,
   CreateTaskResponse,
+  CreateUserMcpConfigurationPayload,
+  McpServerDefinition,
   ServerOverviewResponse,
   Task,
   TaskPriority,
   TaskStatus,
+  UpdateUserMcpConfigurationPayload,
+  UserMcpConfiguration,
   UpdateTaskStatusResponse,
 } from "./types";
 
 export const queryKeys = {
   serverOverview: ["api", "server-overview"] as const,
+  mcpServerDefinitions: ["api", "mcp", "servers"] as const,
   tasks: (status?: TaskStatus) => ["api", "tasks", status ?? "all"] as const,
+  userMcpConfigurations: (userId: string) => ["api", "mcp", "users", userId, "configurations"] as const,
 };
 
 export function useServerOverviewQuery(
@@ -53,6 +64,45 @@ export function useTasksQuery(
   });
 }
 
+export function useMcpServerDefinitionsQuery(
+  options?: Omit<
+    UseQueryOptions<
+      McpServerDefinition[],
+      Error,
+      McpServerDefinition[],
+      typeof queryKeys.mcpServerDefinitions
+    >,
+    "queryKey" | "queryFn"
+  >,
+) {
+  return useQuery({
+    queryKey: queryKeys.mcpServerDefinitions,
+    queryFn: () => fetchMcpServerDefinitions(),
+    staleTime: 5 * 60_000,
+    ...options,
+  });
+}
+
+export function useUserMcpConfigurationsQuery(
+  userId: string,
+  options?: Omit<
+    UseQueryOptions<
+      UserMcpConfiguration[],
+      Error,
+      UserMcpConfiguration[],
+      ReturnType<typeof queryKeys.userMcpConfigurations>
+    >,
+    "queryKey" | "queryFn"
+  >,
+) {
+  return useQuery({
+    queryKey: queryKeys.userMcpConfigurations(userId),
+    queryFn: () => fetchUserMcpConfigurations(userId),
+    enabled: Boolean(userId),
+    ...options,
+  });
+}
+
 export function useCreateTaskMutation(
   options?: UseMutationOptions<
     CreateTaskResponse,
@@ -78,6 +128,49 @@ export function useUpdateTaskStatusMutation(
   return useMutation<UpdateTaskStatusResponse, Error, { taskId: string; status: TaskStatus }>({
     mutationKey: ["api", "tasks", "update-status"],
     mutationFn: ({ taskId, status }) => updateTaskStatus(taskId, status),
+    ...options,
+  });
+}
+
+export function useCreateUserMcpConfigurationMutation(
+  userId: string,
+  options?: UseMutationOptions<UserMcpConfiguration, Error, CreateUserMcpConfigurationPayload>,
+) {
+  return useMutation<UserMcpConfiguration, Error, CreateUserMcpConfigurationPayload>({
+    mutationKey: ["api", "mcp", "users", userId, "configurations", "create"],
+    mutationFn: (payload) => createUserMcpConfiguration(userId, payload),
+    ...options,
+  });
+}
+
+export function useUpdateUserMcpConfigurationMutation(
+  userId: string,
+  options?: UseMutationOptions<
+    UserMcpConfiguration,
+    Error,
+    { configurationId: string; payload: UpdateUserMcpConfigurationPayload }
+  >,
+) {
+  return useMutation<
+    UserMcpConfiguration,
+    Error,
+    { configurationId: string; payload: UpdateUserMcpConfigurationPayload }
+  >({
+    mutationKey: ["api", "mcp", "users", userId, "configurations", "update"],
+    mutationFn: ({ configurationId, payload }) =>
+      updateUserMcpConfiguration(userId, configurationId, payload),
+    ...options,
+  });
+}
+
+export function useDeleteUserMcpConfigurationMutation(
+  userId: string,
+  options?: UseMutationOptions<void, Error, { configurationId: string }>,
+) {
+  return useMutation<void, Error, { configurationId: string }>({
+    mutationKey: ["api", "mcp", "users", userId, "configurations", "delete"],
+    mutationFn: ({ configurationId }) =>
+      deleteUserMcpConfiguration(userId, configurationId).then(() => undefined),
     ...options,
   });
 }

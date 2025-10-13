@@ -1,20 +1,21 @@
-"""
-Epic MCP Server - Interact with Epic FHIR APIs for clinical workflows.
-"""
+"""Epic MCP Server - Interact with Epic FHIR APIs for clinical workflows."""
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any, Callable, Dict, Optional
-
-from dotenv import load_dotenv
-
-load_dotenv()
 
 import aiohttp
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field, model_validator
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+logger = logging.getLogger("fuse_home.servers.epic")
 
 EPIC_BASE_URL: str = os.getenv(
     "EPIC_BASE_URL",
@@ -166,6 +167,31 @@ async def _epic_get(resource_path: str, *, params: Optional[Dict[str, Any]] = No
             return await response.json()
 
 
+def _sanitize_arg(value: Any, *, max_chars: int = 120) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_arg(item, max_chars=max_chars) for item in value[:5]]
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_arg(val, max_chars=max_chars)
+            for key, val in list(value.items())[:10]
+        }
+    text = str(value)
+    if len(text) > max_chars:
+        return text[:max_chars] + "…"
+    return text
+
+
+def _log_tool_call(tool_name: str, **kwargs: Any) -> None:
+    safe_kwargs = {key: _sanitize_arg(val)
+                   for key, val in kwargs.items() if key != "self"}
+    logger.info("Epic tool '%s' invoked", tool_name,
+                extra={"tool_args": safe_kwargs})
+
+
 def _format_patient(resource: Dict[str, Any]) -> str:
     """Convert a FHIR Patient resource into a readable summary."""
 
@@ -289,6 +315,7 @@ async def _require_patient_resource(patient_id: str) -> Any:
 async def get_patient_summary(patient_id: str) -> str:
     """Retrieve demographics and contact details for a patient."""
 
+    _log_tool_call("get_patient_summary", patient_id=patient_id)
     data = await _require_patient_resource(patient_id)
     if isinstance(data, str):
         return data
@@ -300,6 +327,14 @@ async def get_patient_summary(patient_id: str) -> str:
 async def search_patients(request: PatientSearchRequest) -> str:
     """Search for patients using Epic FHIR parameters."""
 
+    _log_tool_call(
+        "search_patients",
+        given=request.given,
+        family=request.family,
+        birthdate=request.birthdate,
+        identifier=request.identifier,
+        page_size=request.page_size,
+    )
     params = {"_count": request.page_size}
     if request.given:
         params["given"] = request.given
@@ -323,6 +358,14 @@ async def search_patients(request: PatientSearchRequest) -> str:
 async def get_patient_appointments(request: AppointmentSearchRequest) -> str:
     """Fetch upcoming appointments for a patient."""
 
+    _log_tool_call(
+        "get_patient_appointments",
+        patient_id=request.patient_id,
+        status=request.status,
+        min_start=request.min_start,
+        max_start=request.max_start,
+        page_size=request.page_size,
+    )
     params = {
         "patient": request.patient_id,
         "_count": request.page_size,
@@ -351,6 +394,8 @@ async def get_patient_appointments(request: AppointmentSearchRequest) -> str:
 async def get_patient_medications(patient_id: str, page_size: int = 20) -> str:
     """Retrieve active medication statements for a patient."""
 
+    _log_tool_call("get_patient_medications",
+                   patient_id=patient_id, page_size=page_size)
     params = {
         "patient": patient_id,
         "status": "active",
@@ -433,6 +478,7 @@ def epic_clinical_assistant_prompt(topic: str = "clinical decision support") -> 
 async def get_epic_capabilities() -> Dict[str, Any]:
     """Return metadata about the Epic MCP server."""
 
+    _log_tool_call("get_epic_capabilities")
     return {
         "server_name": "EpicMCP",
         "description": "Epic FHIR integration server for MCP agents",

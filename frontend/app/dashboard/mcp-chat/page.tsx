@@ -14,7 +14,12 @@ import {
   Share2,
 } from "lucide-react";
 import { useChatMutation, useExecutePlanMutation } from "@/lib/api";
-import type { ChatMessage, ChatRequestPayload } from "@/lib/api";
+import type {
+  ChatMessage,
+  ChatRequestPayload,
+  ToolCallStatus,
+  ToolCallSummary,
+} from "@/lib/api";
 
 type Message = {
   id: string;
@@ -23,6 +28,7 @@ type Message = {
   variant?: "plan";
   planState?: "ready" | "executing" | "completed" | "cancelled";
   error?: string;
+  toolCalls?: ToolCallSummary[] | null;
 };
 
 type PendingPlan = {
@@ -85,6 +91,59 @@ function QuickFiltersRow({
   );
 }
 
+const toolCallStatusClasses: Record<ToolCallStatus, string> = {
+  planned: "bg-blue-500/10 text-blue-200 border-blue-400/40",
+  called: "bg-amber-500/10 text-amber-200 border-amber-400/40",
+  completed: "bg-emerald-500/10 text-emerald-200 border-emerald-400/40",
+  failed: "bg-rose-500/10 text-rose-200 border-rose-400/40",
+};
+
+function ToolCallList({ toolCalls }: { toolCalls?: ToolCallSummary[] | null }) {
+  if (!toolCalls || toolCalls.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-5 space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+      <p className="text-xs uppercase tracking-[0.2em] text-white/50">Tool activity</p>
+      <div className="space-y-4 text-[11px] leading-relaxed text-white/70">
+        {toolCalls.map((call, index) => {
+          const badgeClasses = toolCallStatusClasses[call.status] ?? "bg-white/10 text-white";
+
+          return (
+            <div key={`${call.name}-${index}`} className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="font-medium text-white">{call.name}</span>
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] ${badgeClasses}`}
+                >
+                  {call.status}
+                </span>
+              </div>
+              {call.args && Object.keys(call.args).length > 0 ? (
+                <div className="max-h-48 overflow-auto rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-white/40">Arguments</p>
+                  <pre className="mt-2 whitespace-pre-wrap font-sans text-[11px] text-white/70">
+                    {JSON.stringify(call.args, null, 2)}
+                  </pre>
+                </div>
+              ) : null}
+              {call.result_text ? (
+                <div className="max-h-56 overflow-auto rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-white/40">Result</p>
+                  <pre className="mt-2 whitespace-pre-wrap font-sans text-[11px] text-white/70">
+                    {call.result_text}
+                  </pre>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function MCPChatPage() {
   const [view, setView] = useState<"intro" | "chat">("intro");
   const [query, setQuery] = useState("");
@@ -108,14 +167,15 @@ export default function MCPChatPage() {
     }
   }, [messages]);
 
-  const addAssistantMessage = (content: string) => {
-  const id = `assistant-${makeId()}`;
+  const addAssistantMessage = (content: string, toolCalls?: ToolCallSummary[] | null) => {
+    const id = `assistant-${makeId()}`;
     setMessages((prev) => [
       ...prev,
       {
         id,
         role: "assistant",
         content,
+        toolCalls: toolCalls ?? undefined,
       },
     ]);
     setHistory((prev) => {
@@ -165,7 +225,7 @@ export default function MCPChatPage() {
     try {
       const response = await chatMutation.mutateAsync(request);
       if (response.is_plan) {
-  const planId = `plan-${makeId()}`;
+        const planId = `plan-${makeId()}`;
         setPendingPlan({ request, messageId: planId });
         setMessages((prev) => [
           ...prev,
@@ -175,10 +235,11 @@ export default function MCPChatPage() {
             content: response.response,
             variant: "plan",
             planState: "ready",
+            toolCalls: response.tool_calls ?? undefined,
           },
         ]);
       } else {
-        addAssistantMessage(response.response);
+        addAssistantMessage(response.response, response.tool_calls ?? undefined);
       }
     } catch (error) {
       const message =
@@ -211,11 +272,15 @@ export default function MCPChatPage() {
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === messageId
-            ? { ...msg, planState: "completed" }
+            ? {
+                ...msg,
+                planState: "completed",
+                toolCalls: result.tool_calls ?? msg.toolCalls ?? undefined,
+              }
             : msg,
         ),
       );
-      addAssistantMessage(result.response);
+      addAssistantMessage(result.response, result.tool_calls ?? undefined);
       setPendingPlan(null);
     } catch (error) {
       const message =
@@ -350,6 +415,7 @@ export default function MCPChatPage() {
                                 <p key={index}>{paragraph}</p>
                               ))}
                             </div>
+                            <ToolCallList toolCalls={message.toolCalls} />
                             {message.error ? (
                               <p className="mt-4 text-sm text-rose-300/80">
                                 {message.error}
@@ -400,6 +466,7 @@ export default function MCPChatPage() {
                             {message.content.split("\n\n").map((paragraph, index) => (
                               <p key={index}>{paragraph}</p>
                             ))}
+                            <ToolCallList toolCalls={message.toolCalls} />
                           </div>
                         );
                       }

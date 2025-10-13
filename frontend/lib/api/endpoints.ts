@@ -4,10 +4,15 @@ import type {
   ChatResponsePayload,
   CreateTaskResponse,
   HealthResponse,
+  McpConfigurationStatus,
+  McpServerDefinition,
+  CreateUserMcpConfigurationPayload,
+  UpdateUserMcpConfigurationPayload,
   ServerOverviewResponse,
   Task,
   TaskPriority,
   TaskStatus,
+  UserMcpConfiguration,
   UpdateTaskStatusResponse,
 } from "./types";
 
@@ -24,7 +29,7 @@ function normalizePath(path: string): string {
   return path;
 }
 
-async function request<T>(path: string, init?: RequestInit, options?: RequestOptions): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit, options?: RequestOptions): Promise<T> {
   const baseUrl = (options?.baseUrl ?? getBackendBaseUrl()).replace(/\/$/, "");
   const url = `${baseUrl}${normalizePath(path)}`;
 
@@ -57,6 +62,10 @@ async function request<T>(path: string, init?: RequestInit, options?: RequestOpt
 
 export function fetchServerOverview(options?: RequestOptions) {
   return request<ServerOverviewResponse>("/server-overview", undefined, options);
+}
+
+export function fetchMcpServerDefinitions(options?: RequestOptions) {
+  return request<McpServerDefinition[]>("/mcp/servers", undefined, options);
 }
 
 export function fetchTasks(status?: TaskStatus, options?: RequestOptions) {
@@ -128,4 +137,114 @@ export function postExecute(payload: ChatRequestPayload, options?: RequestOption
 
 export function fetchHealth(options?: RequestOptions) {
   return request<HealthResponse>("/health", undefined, options);
+}
+
+export interface WorkflowAnalyticsResponse {
+  overview: {
+    total_workflows: number;
+    active_workflows: number;
+    draft_workflows: number;
+    total_executions: number;
+    success_rate: number;
+    avg_execution_time: number;
+  };
+  daily_executions: Array<{
+    date: string;
+    total: number;
+    success: number;
+    error: number;
+    running: number;
+  }>;
+  workflow_execution_counts: Array<{
+    workflow_id: string;
+    workflow_name: string;
+    executions: number;
+    success: number;
+    error: number;
+  }>;
+  category_distribution: Array<{
+    category: string;
+    count: number;
+  }>;
+  status_distribution: Array<{
+    status: string;
+    count: number;
+  }>;
+  execution_status_distribution: Array<{
+    status: string;
+    count: number;
+  }>;
+  recent_executions: Array<{
+    id: string;
+    workflow_id: string;
+    workflow_name: string;
+    status: string;
+    started_at: string;
+    completed_at: string | null;
+    duration: number | null;
+  }>;
+  date_range: {
+    start: string;
+    end: string;
+    days: number;
+  };
+}
+
+export function fetchWorkflowAnalytics(userId: string, days: number = 7, options?: RequestOptions) {
+  return request<WorkflowAnalyticsResponse>(
+    `/workflows/analytics?user_id=${encodeURIComponent(userId)}&days=${days}`,
+    undefined,
+    options
+  );
+}
+
+export function fetchUserMcpConfigurations(userId: string, options?: RequestOptions) {
+  return request<UserMcpConfiguration[]>(`/mcp/users/${encodeURIComponent(userId)}/configurations`, undefined, options);
+}
+
+export function createUserMcpConfiguration(
+  userId: string,
+  payload: CreateUserMcpConfigurationPayload,
+  options?: RequestOptions,
+) {
+  return request<UserMcpConfiguration>(
+    `/mcp/users/${encodeURIComponent(userId)}/configurations`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+}
+
+export function updateUserMcpConfiguration(
+  userId: string,
+  configurationId: string,
+  payload: UpdateUserMcpConfigurationPayload,
+  options?: RequestOptions,
+) {
+  return request<UserMcpConfiguration>(
+    `/mcp/users/${encodeURIComponent(userId)}/configurations/${encodeURIComponent(configurationId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+    options,
+  );
+}
+
+export function deleteUserMcpConfiguration(userId: string, configurationId: string, options?: RequestOptions) {
+  return request<undefined>(
+    `/mcp/users/${encodeURIComponent(userId)}/configurations/${encodeURIComponent(configurationId)}`,
+    {
+      method: "DELETE",
+    },
+    options,
+  );
 }

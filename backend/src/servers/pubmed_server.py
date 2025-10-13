@@ -1,17 +1,19 @@
-"""
-PubMed MCP Server - Research medical articles on PubMed database
-"""
+"""PubMed MCP Server - Research medical articles on PubMed database"""
+
+import logging
+from typing import Dict, Any, Optional, Literal
+
+import aiohttp
+
+from fastmcp import FastMCP
+from pydantic import BaseModel, Field
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
-import asyncio
-import aiohttp
-from typing import Dict, Any, Optional, Literal
-from urllib.parse import urlencode, quote_plus
 
-from fastmcp import FastMCP
-from pydantic import BaseModel, Field
+logger = logging.getLogger("fuse_home.servers.pubmed")
 
 # PubMed MCP Server
 pubmed_server = FastMCP("PubMedMCP")
@@ -100,6 +102,31 @@ class SearchAbstractsRequest(BaseModel):
     )
 
 
+def _sanitize_arg(value: Any, *, max_chars: int = 120) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_arg(item, max_chars=max_chars) for item in value[:5]]
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_arg(val, max_chars=max_chars)
+            for key, val in list(value.items())[:10]
+        }
+    text = str(value)
+    if len(text) > max_chars:
+        return text[:max_chars] + "…"
+    return text
+
+
+def _log_tool_call(tool_name: str, **kwargs: Any) -> None:
+    safe_kwargs = {key: _sanitize_arg(val)
+                   for key, val in kwargs.items() if key != "self"}
+    logger.info("PubMed tool '%s' invoked", tool_name,
+                extra={"tool_args": safe_kwargs})
+
+
 async def _search_pubmed_abstracts(request: SearchAbstractsRequest) -> str:
     """Helper function to search abstracts on PubMed database based on the request parameters.
 
@@ -116,6 +143,17 @@ async def _search_pubmed_abstracts(request: SearchAbstractsRequest) -> str:
         request: SearchAbstractsRequest with search parameters
     """
     try:
+        _log_tool_call(
+            "search_abstracts",
+            term=request.term,
+            retmax=request.retmax,
+            sort=request.sort,
+            field=request.field,
+            datetype=request.datetype,
+            reldate=request.reldate,
+            mindate=request.mindate,
+            maxdate=request.maxdate,
+        )
         # Build search parameters
         search_params = {
             "db": "pubmed",
@@ -200,6 +238,7 @@ async def get_article_details(pmid: str) -> str:
     """
 
     try:
+        _log_tool_call("get_article_details", pmid=pmid)
         efetch_params = {
             "db": "pubmed",
             "id": pmid,
@@ -239,6 +278,8 @@ async def search_by_author(author_name: str, retmax: int = 20) -> str:
     # Format author search term
     search_term = f"{author_name}[author]"
 
+    _log_tool_call("search_by_author", author_name=author_name, retmax=retmax)
+
     request = SearchAbstractsRequest(
         term=search_term,
         retmax=retmax,
@@ -260,6 +301,9 @@ async def search_recent_articles(topic: str, days: int = 30, retmax: int = 20) -
     Returns:
         Recent articles on the specified topic
     """
+
+    _log_tool_call("search_recent_articles",
+                   topic=topic, days=days, retmax=retmax)
 
     request = SearchAbstractsRequest(
         term=topic,
@@ -300,6 +344,7 @@ Always cite PMIDs and include publication details for referenced articles.
 @pubmed_server.tool()
 async def get_pubmed_capabilities() -> Dict[str, Any]:
     """Get information about PubMed MCP server capabilities."""
+    _log_tool_call("get_pubmed_capabilities")
     return {
         "server_name": "PubMedMCP",
         "description": "Medical literature search and research server",
