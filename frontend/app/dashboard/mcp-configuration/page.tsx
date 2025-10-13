@@ -233,11 +233,10 @@ export default function McpConfigurationPage() {
     updateMutation.mutate({
       configurationId: config.id,
       payload: {
-        displayName:
-          editedDisplayName.trim() &&
+        displayName: editedDisplayName.trim() &&
             editedDisplayName.trim() !== config.displayName
-            ? editedDisplayName.trim()
-            : undefined,
+          ? editedDisplayName.trim()
+          : undefined,
         configValues: buildConfigPayload(
           config.server.configFields,
           editedConfigValues,
@@ -501,8 +500,7 @@ export default function McpConfigurationPage() {
                           "Custom MCP server"}
                       </CardDescription>
                       <p className="text-xs text-white/40">
-                        Last updated:{" "}
-                        {formatTimestamp(
+                        Last updated: {formatTimestamp(
                           configuration.updatedAt || configuration.createdAt,
                         )}
                       </p>
@@ -510,8 +508,8 @@ export default function McpConfigurationPage() {
 
                     {isEditing
                       ? (
-                        <CardContent>
-                          <div className="space-y-4">
+                        <CardContent className="">
+                          <div className="space-y-4 ">
                             <div>
                               <label className="block text-sm font-medium mb-2">
                                 Display Name

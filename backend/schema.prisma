@@ -20,7 +20,7 @@ model User {
   // Relations
   chats             Chat[]
   mcpConfigurations UserMcpConfiguration[]
-  connections       Connection[]
+  integrations      Integration[]
   workflows         Workflow[]
 
   @@map("users")
@@ -109,39 +109,69 @@ enum AuthType {
   BEARER_TOKEN
   CLIENT_CREDENTIALS
   SSH_KEY
-  CUSTOM
+  NONE // For public APIs that don't require auth
 }
 
-enum ConnectionStatus {
+enum IntegrationStatus {
   ACTIVE
+  INACTIVE
   EXPIRED
   ERROR
   REVOKED
 }
 
-model Connection {
-  id           String           @id @default(cuid())
-  userId       String
-  serviceType  String // "gmail", "google-sheets", "epic", "pubmed"
-  displayName  String // "John's Hospital Gmail"
-  authType     AuthType         @default(OAUTH2) // Authentication method
-  authConfig   Json? // Auth-specific config (scopes, endpoints)
-  status       ConnectionStatus @default(ACTIVE)
-  credentials  String // Encrypted JSON with OAuth tokens or API keys
-  metadata     Json? // Account info, scopes, email, etc.
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  lastTestedAt DateTime?
+enum IntegrationCategory {
+  HEALTHCARE
+  COMMUNICATION
+  AI
+  DATA
+  PRODUCTIVITY
+  STORAGE
+  WEB
+  OTHER
+}
+
+model Integration {
+  id     String @id @default(cuid())
+  userId String
+
+  // Connector Information
+  connectorId String // "gmail", "openfda", "rxnorm", "slack"
+  displayName String // User-friendly name "John's Gmail"
+  category    IntegrationCategory // Category for organization
+
+  // Authentication
+  authType   AuthType // How to authenticate
+  authConfig Json? // Auth-specific config (scopes, endpoints, etc.)
+
+  // Credentials (always encrypted)
+  encryptedData String @db.Text // Fernet encrypted JSON with all credentials
+
+  // OAuth-specific fields (for OAuth2 integrations)
+  accessToken    String?   @db.Text // Current access token
+  refreshToken   String?   @db.Text // Refresh token for token renewal
+  tokenExpiresAt DateTime? // When access token expires
+
+  // Status & Metadata
+  status   IntegrationStatus @default(ACTIVE)
+  metadata Json? // Connector-specific metadata (account info, etc.)
+
+  // Timestamps
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastValidated DateTime? // Last time credentials were tested
+  lastUsed      DateTime? // Last time used in workflow execution
 
   // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, serviceType, displayName])
+  @@unique([userId, connectorId, displayName])
   @@index([userId])
-  @@index([serviceType])
-  @@index([authType])
+  @@index([connectorId])
+  @@index([category])
   @@index([status])
-  @@map("connections")
+  @@index([authType])
+  @@map("integrations")
 }
 
 enum WorkflowStatus {

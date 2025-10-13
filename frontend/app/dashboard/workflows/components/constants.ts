@@ -198,6 +198,7 @@ export const nodeTemplates: NodeTemplate[] = [
                 placeholder: "Email content...",
             },
         ],
+        requiresConnectorSelection: true,
     },
     {
         id: "notification",

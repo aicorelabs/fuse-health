@@ -84,6 +84,21 @@ export interface NodeTypeField {
     type: "text" | "email" | "number" | "textarea";
     required?: boolean;
     placeholder?: string;
+    helperText?: string;
+}
+
+export interface ActionParameter {
+    name: string;
+    type: string;
+    description: string;
+    required: boolean;
+}
+
+export interface ConnectorAction {
+    id: string;
+    name: string;
+    description: string;
+    params: ActionParameter[];
 }
 
 export interface NodeTypeDefinition {
@@ -92,6 +107,10 @@ export interface NodeTypeDefinition {
     description: string;
     category: "trigger" | "action" | "data" | "logic" | "ai";
     service_type?: string;
+    icon?: string;
+    auth_type?: string;
+    activated?: boolean; // Indicates if user has an active integration for this connector
+    actions?: ConnectorAction[]; // Available actions for this connector
     fields: NodeTypeField[];
 }
 
@@ -411,8 +430,9 @@ export function getExecution(executionId: string, options?: RequestOptions) {
 /**
  * Get available node types from backend
  */
-export function getNodeTypes(options?: RequestOptions) {
-    return request<NodeTypesResponse>(`/workflows/node-types`, undefined, options);
+export function getNodeTypes(userId?: string, options?: RequestOptions) {
+    const query = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+    return request<NodeTypesResponse>(`/workflows/node-types${query}`, undefined, options);
 }
 
 

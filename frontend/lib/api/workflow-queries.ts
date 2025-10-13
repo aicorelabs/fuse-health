@@ -33,11 +33,11 @@ export const workflowKeys = {
 /**
  * Hook to get available node types from backend
  */
-export function useNodeTypes(options?: UseQueryOptions<workflowsApi.NodeTypesResponse>) {
+export function useNodeTypes(userId?: string, options?: UseQueryOptions<workflowsApi.NodeTypesResponse>) {
     return useQuery({
-        queryKey: workflowKeys.nodeTypes(),
-        queryFn: () => workflowsApi.getNodeTypes(),
-        staleTime: 1000 * 60 * 60, // 1 hour - node types don't change often
+        queryKey: [...workflowKeys.nodeTypes(), userId],
+        queryFn: () => workflowsApi.getNodeTypes(userId),
+        staleTime: 1000 * 60 * 5, // 5 minutes - refresh more frequently to reflect integration changes
         ...options,
     });
 }

@@ -10,7 +10,9 @@ from .services import database, mcp_configuration_service
 from .views import (
     chat_routes,
     connection_routes,
+    connector_routes,
     health_routes,
+    integration_routes,
     mcp_configuration_routes,
     oauth_routes,
     service_routes,
@@ -42,7 +44,10 @@ app.add_middleware(
 app.include_router(chat_routes.router)
 app.include_router(health_routes.router)
 app.include_router(mcp_configuration_routes.router)
+# Deprecated - use integration_routes
 app.include_router(connection_routes.router)
+app.include_router(integration_routes.router)  # New integration API
+app.include_router(connector_routes.router)  # New connector browsing API
 app.include_router(service_routes.router)
 app.include_router(oauth_routes.router)
 app.include_router(workflow_analytics_routes.router)

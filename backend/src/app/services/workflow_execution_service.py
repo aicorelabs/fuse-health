@@ -1,11 +1,23 @@
-"""Workflow execution engine."""
+"""Workflow execution engine with connector-based integrations."""
 import asyncio
 import json
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from enum import Enum
 
 from prisma import Prisma
+
+# Import connectors - use absolute import for better compatibility
+try:
+    from src.connectors import ConnectorRegistry
+    from src.app.services.integration_service import IntegrationService
+    from src.app.services.template_engine import template_engine
+except ImportError:
+    # Fallback for relative imports when running as module
+    from ...connectors import ConnectorRegistry
+    from .integration_service import IntegrationService
+    from .template_engine import template_engine
 
 
 class NodeType(str, Enum):
@@ -16,7 +28,6 @@ class NodeType(str, Enum):
     LOOP = "loop"
     DELAY = "delay"
     TRANSFORM = "transform"
-    AI = "ai"
 
 
 class WorkflowNode:
@@ -27,15 +38,17 @@ class WorkflowNode:
         id: str,
         type: NodeType,
         name: str,
-        service_type: Optional[str] = None,
-        connection_id: Optional[str] = None,
+        connector_id: Optional[str] = None,
+        integration_id: Optional[str] = None,
+        action_id: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
     ):
         self.id = id
         self.type = type
         self.name = name
-        self.service_type = service_type
-        self.connection_id = connection_id
+        self.connector_id = connector_id
+        self.integration_id = integration_id
+        self.action_id = action_id
         self.config = config or {}
 
 
@@ -165,8 +178,12 @@ class WorkflowExecutionEngine:
                     id=n["id"],
                     type=NodeType(n["type"]),
                     name=n["data"].get("label", "Unnamed"),
-                    service_type=n["data"].get("serviceType"),
-                    connection_id=n["data"].get("connectionId"),
+                    connector_id=n["data"].get("config", {}).get(
+                        "connectorId") or n["data"].get("connectorId"),
+                    integration_id=n["data"].get("config", {}).get(
+                        "integrationId") or n["data"].get("integrationId"),
+                    action_id=n["data"].get("config", {}).get(
+                        "actionId") or n["data"].get("actionId"),
                     config=n["data"].get("config", {}),
                 )
                 for n in nodes_data
@@ -291,8 +308,6 @@ class WorkflowExecutionEngine:
             return await self._execute_delay_node(node, context)
         elif node.type == NodeType.LOOP:
             return await self._execute_loop_node(node, context)
-        elif node.type == NodeType.AI:
-            return await self._execute_ai_node(node, context)
         else:
             raise ValueError(f"Unknown node type: {node.type}")
 
@@ -302,96 +317,113 @@ class WorkflowExecutionEngine:
         return {"status": "triggered", "data": context.variables}
 
     async def _execute_action_node(self, node: WorkflowNode, context: ExecutionContext) -> Dict[str, Any]:
-        """Execute an action node (e.g., send email, API call)."""
-        # This will be implemented with actual service integrations
-        # For now, simulate the action
+        """Execute an action node using the connector system."""
+        if not node.connector_id or not node.integration_id or not node.action_id:
+            raise ValueError(
+                f"Action node {node.id} missing connector_id, integration_id, or action_id"
+            )
 
-        if not node.service_type:
-            raise ValueError(f"Action node {node.id} missing service_type")
+        # Get integration service
+        integration_service = IntegrationService(self.db)
 
-        # Get connection if needed
-        connection = None
-        if node.connection_id:
-            connection = await self.db.connection.find_unique(where={"id": node.connection_id})
+        # Get connector
+        connector = integration_service.registry.get_connector(
+            node.connector_id)
+        if not connector:
+            raise ValueError(f"Connector '{node.connector_id}' not found")
 
-            if not connection:
-                raise ValueError(f"Connection {node.connection_id} not found")
+        # Get integration and credentials
+        try:
+            credentials = await integration_service.get_integration_credentials(
+                integration_id=node.integration_id,
+                user_id=context.user_id,
+            )
+        except Exception as e:
+            raise ValueError(f"Failed to get credentials: {str(e)}")
+
+        # Resolve parameters from node config and context
+        params = self._resolve_parameters(node.config, context)
 
         context.add_log(
             "info",
-            f"Executing action: {node.service_type}",
+            f"Executing connector action: {node.connector_id}.{node.action_id}",
             node_id=node.id,
-            data={"config": node.config},
+            data={"params": params},
         )
 
-        # Simulate different service types
-        result = {}
-        
-        if node.service_type == "google_sheets":
-            # Simulate Google Sheets read
-            spreadsheet_id = node.config.get("spreadsheet_id")
-            range_name = node.config.get("range", "Sheet1!A:Z")
-            
-            # Simulate fetching data (in real implementation, use Google Sheets API)
-            mock_data = [
-                {"name": "John Doe", "email": "john@example.com", "status": "Active"},
-                {"name": "Jane Smith", "email": "jane@example.com", "status": "Active"},
-                {"name": "Bob Johnson", "email": "bob@example.com", "status": "Pending"},
-            ]
-            
-            context.set_variable("sheet_data", mock_data)
-            
-            result = {
+        # Execute connector action
+        try:
+            result = await connector.execute(
+                action_id=node.action_id,
+                params=params,
+                credentials=credentials,
+            )
+
+            if not result.success:
+                raise ValueError(result.error or "Action execution failed")
+
+            # Update integration last used timestamp
+            await self.db.integration.update(
+                where={"id": node.integration_id},
+                data={"lastUsed": datetime.utcnow()},
+            )
+
+            # Store result data in context for downstream nodes
+            if result.data:
+                # Store under a namespaced key
+                context.set_variable(f"node_{node.id}_result", result.data)
+
+                # Also store as generic output for immediate use
+                context.set_variable("last_action_result", result.data)
+
+            return {
                 "status": "completed",
-                "service": node.service_type,
-                "connection": connection.displayName if connection else None,
-                "output": f"Fetched {len(mock_data)} rows from Google Sheets",
-                "data": mock_data,
-                "row_count": len(mock_data),
-            }
-            
-        elif node.service_type == "gmail":
-            # Simulate Gmail send
-            to = node.config.get("to")
-            subject = node.config.get("subject")
-            body = node.config.get("body")
-            
-            # Replace variables in email fields
-            loop_item = context.get_variable("loop_item")
-            if loop_item and isinstance(loop_item, dict):
-                # Replace placeholders with loop item values
-                if to:
-                    for key, value in loop_item.items():
-                        to = to.replace(f"${{{key}}}", str(value))
-                if subject:
-                    for key, value in loop_item.items():
-                        subject = subject.replace(f"${{{key}}}", str(value))
-                if body:
-                    for key, value in loop_item.items():
-                        body = body.replace(f"${{{key}}}", str(value))
-            
-            result = {
-                "status": "completed",
-                "service": node.service_type,
-                "connection": connection.displayName if connection else None,
-                "output": f"Email sent to {to}",
-                "email_details": {
-                    "to": to,
-                    "subject": subject,
-                    "body_preview": body[:50] + "..." if body and len(body) > 50 else body,
-                }
-            }
-            
-        else:
-            # Default simulation
-            result = {
-                "status": "completed",
-                "service": node.service_type,
-                "connection": connection.displayName if connection else None,
-                "output": f"Action {node.name} executed successfully",
+                "connector": node.connector_id,
+                "action": node.action_id,
+                "output": "Action completed successfully" if result.success else (result.error or "Action failed"),
+                "data": result.data,
             }
 
-        return result
+        except Exception as e:
+            context.add_error(
+                f"Connector action failed: {str(e)}",
+                node_id=node.id,
+                error=e,
+            )
+            raise
+
+    def _resolve_parameters(
+        self,
+        config: Dict[str, Any],
+        context: ExecutionContext,
+    ) -> Dict[str, Any]:
+        """
+        Resolve parameters by substituting variables from context.
+
+        Now uses the enhanced template engine that supports:
+        - ${variable} - direct variable substitution
+        - ${node_id.result.field} - accessing node result fields
+        - ${loop_item.field} - accessing loop item fields
+        - {{helper_name args}} - template helper functions
+        - JSONPath queries, array operations, string manipulation, etc.
+        """
+        # Use the enhanced template engine for resolution
+        return template_engine.resolve(config, context.variables)
+
+    def _substitute_variables(self, text: str, context: ExecutionContext) -> Any:
+        """
+        Legacy method: Substitute variables in text string.
+
+        NOTE: This is kept for backward compatibility. New code should use
+        the template_engine directly which provides more features.
+
+        Examples:
+        - "${email}" -> context.get_variable("email")
+        - "${loop_item.name}" -> context.get_variable("loop_item")["name"]
+        - "${node_abc123_result.data}" -> context.get_variable("node_abc123_result")["data"]
+        """
+        # Use the template engine for consistency
+        return template_engine._resolve_variables(text, context.variables)
 
     async def _execute_condition_node(self, node: WorkflowNode, context: ExecutionContext) -> Dict[str, Any]:
         """Execute a condition node (if/else logic)."""
@@ -465,24 +497,25 @@ class WorkflowExecutionEngine:
         """Execute a loop node (iterate over items)."""
         loop_type = node.config.get("loop_type", "foreach")
         items_key = node.config.get("items", "items")
-        
+
         # Get items from context or config
         items = context.get_variable(items_key)
         if items is None:
             items = node.config.get("items_data", [])
-        
+
         if not isinstance(items, list):
-            context.add_error(f"Loop items must be a list, got {type(items)}", node_id=node.id)
+            context.add_error(
+                f"Loop items must be a list, got {type(items)}", node_id=node.id)
             return {"status": "error", "error": "Invalid items type"}
-        
+
         context.add_log(
-            "info", 
-            f"Starting loop: {loop_type} over {len(items)} items", 
+            "info",
+            f"Starting loop: {loop_type} over {len(items)} items",
             node_id=node.id
         )
-        
+
         results = []
-        
+
         if loop_type == "foreach":
             # Iterate over each item
             for index, item in enumerate(items):
@@ -490,144 +523,61 @@ class WorkflowExecutionEngine:
                 context.set_variable("loop_index", index)
                 context.set_variable("loop_item", item)
                 context.set_variable("loop_current", item)
-                
+
                 context.add_log(
                     "info",
                     f"Loop iteration {index + 1}/{len(items)}",
                     node_id=node.id,
                     data={"item": item}
                 )
-                
+
                 # Store result
                 results.append({
                     "index": index,
                     "item": item,
                     "processed": True
                 })
-        
+
         elif loop_type == "while":
             # While loop (limit iterations for safety)
             condition = node.config.get("condition", "false")
             max_iterations = node.config.get("max_iterations", 100)
             iteration = 0
-            
+
             while iteration < max_iterations:
                 # Evaluate condition
                 try:
                     # Replace variables in condition
                     eval_condition = condition
                     for var_name, var_value in context.variables.items():
-                        eval_condition = eval_condition.replace(f"${{{var_name}}}", str(var_value))
-                    
+                        eval_condition = eval_condition.replace(
+                            f"${{{var_name}}}", str(var_value))
+
                     if not eval(eval_condition):
                         break
-                    
+
                     context.set_variable("loop_index", iteration)
                     iteration += 1
-                    
+
                 except Exception as e:
-                    context.add_error(f"Loop condition evaluation failed: {condition}", node_id=node.id, error=e)
+                    context.add_error(
+                        f"Loop condition evaluation failed: {condition}", node_id=node.id, error=e)
                     break
-        
+
         context.add_log(
             "info",
             f"Loop completed: processed {len(results)} items",
             node_id=node.id
         )
-        
+
         # Store results in context for next nodes
         context.set_variable("loop_results", results)
-        
+
         return {
             "status": "completed",
             "loop_type": loop_type,
             "iterations": len(results),
             "results": results
-        }
-
-    async def _execute_ai_node(self, node: WorkflowNode, context: ExecutionContext) -> Dict[str, Any]:
-        """Execute an AI node (LLM processing)."""
-        ai_provider = node.config.get("provider", "openai")
-        model = node.config.get("model", "gpt-4")
-        prompt = node.config.get("prompt", "")
-        system_prompt = node.config.get("system_prompt", "You are a helpful assistant.")
-        temperature = node.config.get("temperature", 0.7)
-        max_tokens = node.config.get("max_tokens", 500)
-        
-        # Replace variables in prompts
-        loop_item = context.get_variable("loop_item")
-        if loop_item and isinstance(loop_item, dict):
-            for key, value in loop_item.items():
-                prompt = prompt.replace(f"${{{key}}}", str(value))
-                system_prompt = system_prompt.replace(f"${{{key}}}", str(value))
-        
-        # Also replace other context variables
-        for var_name, var_value in context.variables.items():
-            if var_name != "loop_item":
-                prompt = prompt.replace(f"${{{var_name}}}", str(var_value))
-                system_prompt = system_prompt.replace(f"${{{var_name}}}", str(var_value))
-        
-        context.add_log(
-            "info",
-            f"Executing AI node: {ai_provider}/{model}",
-            node_id=node.id,
-            data={
-                "provider": ai_provider,
-                "model": model,
-                "prompt_preview": prompt[:100] + "..." if len(prompt) > 100 else prompt
-            }
-        )
-        
-        # Simulate AI response (in production, call actual API)
-        if ai_provider == "openai":
-            # Simulate OpenAI API call
-            simulated_response = f"[AI Generated Response based on: {prompt[:50]}...]"
-            
-            if "email" in prompt.lower() or "write" in prompt.lower():
-                simulated_response = f"""Subject: Personalized Message
-
-Dear User,
-
-This is an AI-generated personalized email based on your request.
-
-{prompt}
-
-Best regards,
-AI Assistant"""
-            
-            elif "summarize" in prompt.lower():
-                simulated_response = "This is a concise summary of the provided content, highlighting the key points and main ideas."
-            
-            elif "analyze" in prompt.lower():
-                simulated_response = "Based on the analysis, the data shows positive trends with key insights indicating successful performance."
-        
-        elif ai_provider == "anthropic":
-            simulated_response = f"[Claude AI response to: {prompt[:50]}...]"
-        
-        else:
-            simulated_response = f"[AI response from {ai_provider}]"
-        
-        # Store AI response in context
-        context.set_variable("ai_response", simulated_response)
-        context.set_variable("ai_last_response", simulated_response)
-        
-        context.add_log(
-            "info",
-            f"AI node completed",
-            node_id=node.id,
-            data={
-                "response_preview": simulated_response[:100] + "..." if len(simulated_response) > 100 else simulated_response,
-                "tokens_used": len(simulated_response.split())  # Rough estimate
-            }
-        )
-        
-        return {
-            "status": "completed",
-            "provider": ai_provider,
-            "model": model,
-            "response": simulated_response,
-            "prompt_used": prompt,
-            "tokens_estimate": len(simulated_response.split())
         }
 
 

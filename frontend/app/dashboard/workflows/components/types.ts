@@ -69,6 +69,8 @@ export interface StepNodeData {
     config: Record<string, string>;
     configFields?: NodeConfigField[];
     connectors?: NodeConnector[];
+    requiresConnectorSelection?: boolean;
+    serviceType?: string; // Maps to connector ID (e.g., "gmail", "pubmed")
 }
 
 export type FlowNode = Node<StepNodeData>;

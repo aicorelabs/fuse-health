@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties, MouseEvent } from "react";
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -10,49 +10,28 @@ import {
   Background,
   type Connection,
   Controls,
-  type Edge,
   type EdgeChange,
-  type EdgeProps,
-  getBezierPath,
-  Handle,
   MiniMap,
-  type Node,
   type NodeChange,
   type OnConnect,
   type OnEdgesChange,
   type OnNodesChange,
-  Position,
   ReactFlow,
-  type ReactFlowInstance,
   ReactFlowProvider,
   useReactFlow,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import type { LucideIcon } from "lucide-react";
 import {
-  AlertTriangle,
   ArrowLeft,
-  ArrowRight,
-  Bot,
-  Calendar,
-  CheckCircle,
   Clock3,
-  Copy,
-  Database,
-  FileText,
   Filter,
-  GitBranch,
   Mail,
-  MessageSquare,
-  Play,
-  Plus,
   Repeat,
   Save,
   Settings,
   Sparkles,
   Table,
-  Trash2,
-  Users,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -66,11 +45,22 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 
 import { cn } from "@/lib/utils";
 import StepNode from "./components/StepNode";
 import ConfigEdge, { EDGE_MARKER_ID } from "./components/ConfigEdge";
+import { ConnectorActionSelector } from "./components/ConnectorActionSelector";
+import { getConnectorAction } from "@/lib/api/connectors";
 import type {
   FlowEdge,
   FlowNode,
@@ -250,6 +240,7 @@ export interface NodeTemplate {
   description: string;
   defaultConfig: Record<string, string>;
   configFields: NodeConfigField[];
+  requiresConnectorSelection?: boolean;
 }
 
 export interface FlowStateValue {
@@ -277,8 +268,6 @@ function cloneFlow(flow: FlowDefinition): FlowStateValue {
 }
 
 // connector styles moved to components/types
-
-// StepNode moved to components/StepNode
 
 const defaultEdgeStyle: CSSProperties = {
   stroke: "#7F8BFF",
@@ -328,8 +317,13 @@ function WorkflowsPageContent() {
   const [workflowDescription, setWorkflowDescription] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  // Load node types from backend
-  const { data: nodeTypesData, isLoading: isLoadingNodeTypes } = useNodeTypes();
+  // TODO: Get user_id from auth context
+  const userId = "user_demo_001";
+
+  // Load node types from backend with user_id to get activation status
+  const { data: nodeTypesData, isLoading: isLoadingNodeTypes } = useNodeTypes(
+    userId,
+  );
 
   // Load workflow from API if ID is provided
   const { data: loadedWorkflow, isLoading: isLoadingWorkflow } = useWorkflow(
@@ -350,13 +344,11 @@ function WorkflowsPageContent() {
       setWorkflowName(loadedWorkflow.name);
       setWorkflowDescription(loadedWorkflow.description || "");
 
-      // Helper to find config fields for a node from backend node types
-      const getConfigFieldsForNode = (
+      const findNodeDefinition = (
         node: WorkflowNode,
-      ): NodeConfigField[] => {
-        if (!nodeTypesData) return [];
+      ): NodeTypeDefinition | undefined => {
+        if (!nodeTypesData) return undefined;
 
-        // Search all backend node type categories
         const allBackendNodes = [
           ...nodeTypesData.trigger,
           ...nodeTypesData.action,
@@ -365,13 +357,11 @@ function WorkflowsPageContent() {
           ...nodeTypesData.ai,
         ];
 
-        // Strategy 1: Try to find by service type (most reliable)
         let nodeDef = allBackendNodes.find(
           (n) => n.service_type && n.service_type === node.data.serviceType,
         );
 
         if (!nodeDef) {
-          // Strategy 2: Try to match by node type and label
           const category = getNodeCategory(node.type);
           nodeDef = allBackendNodes.find(
             (n) => n.category === category && n.label === node.data.label,
@@ -379,62 +369,70 @@ function WorkflowsPageContent() {
         }
 
         if (!nodeDef) {
-          // Strategy 3: For nodes without service_type, match by category
           const category = getNodeCategory(node.type);
           const categoryNodes = allBackendNodes.filter((n) =>
             n.category === category
           );
 
-          // For condition nodes, match "Condition"
           if (node.type === "condition") {
             nodeDef = categoryNodes.find((n) => n.id === "condition");
-          } // For transform nodes
-          else if (node.type === "transform") {
+          } else if (node.type === "transform") {
             nodeDef = categoryNodes.find((n) => n.id === "transform");
-          } // For loop nodes
-          else if (node.type === "loop") {
+          } else if (node.type === "loop") {
             nodeDef = categoryNodes.find((n) => n.id === "loop");
-          } // For delay nodes
-          else if (node.type === "delay") {
+          } else if (node.type === "delay") {
             nodeDef = categoryNodes.find((n) => n.id === "delay");
-          } // For AI nodes, match by label
-          else if (node.type === "ai") {
+          } else if (node.type === "ai") {
             nodeDef = categoryNodes.find((n) => n.label === node.data.label);
           }
         }
 
-        if (nodeDef) {
-          return nodeDef.fields.map((field) => ({
-            id: field.id,
-            label: field.label,
-            type: field.type === "number"
-              ? "text"
-              : field.type as "text" | "email" | "textarea" | "multi",
-            required: field.required,
-            placeholder: field.placeholder,
-          }));
-        }
+        return nodeDef;
+      };
 
-        return [];
+      const getConfigFieldsForNode = (
+        node: WorkflowNode,
+        nodeDef?: NodeTypeDefinition,
+      ): NodeConfigField[] => {
+        const definition = nodeDef ?? findNodeDefinition(node);
+        if (!definition) return [];
+
+        return definition.fields.map((field) => ({
+          id: field.id,
+          label: field.label,
+          type: field.type === "number"
+            ? "text"
+            : field.type as "text" | "email" | "textarea" | "multi",
+          required: field.required,
+          placeholder: field.placeholder,
+        }));
       };
 
       // Convert API nodes to FlowNodes
-      const flowNodes: FlowNode[] = loadedWorkflow.nodes.map((node) => ({
-        id: node.id,
-        type: "step",
-        position: node.position,
-        data: {
-          label: node.data.label,
-          subtitle: node.data.serviceType || "Configure this step",
-          accent: getAccentForNodeType(node.type),
-          icon: getIconForNodeType(node.type),
-          chipText: getChipTextForNodeType(node.type),
-          helperText: "Select to configure",
-          config: node.data.config || {},
-          configFields: getConfigFieldsForNode(node),
-          connectors: getDefaultConnectors(node.id, getNodeCategory(node.type)),
-        },
-      }));
+      const flowNodes: FlowNode[] = loadedWorkflow.nodes.map((node) => {
+        const nodeDef = findNodeDefinition(node);
+        return {
+          id: node.id,
+          type: "step",
+          position: node.position,
+          data: {
+            label: node.data.label,
+            subtitle: node.data.serviceType || "Configure this step",
+            accent: getAccentForNodeType(node.type),
+            icon: getIconForNodeType(node.type),
+            chipText: getChipTextForNodeType(node.type),
+            helperText: "Select to configure",
+            config: node.data.config || {},
+            configFields: getConfigFieldsForNode(node, nodeDef),
+            connectors: getDefaultConnectors(
+              node.id,
+              getNodeCategory(node.type),
+            ),
+            requiresConnectorSelection: Boolean(nodeDef?.service_type),
+            serviceType: nodeDef?.service_type, // Preserve service type for connector filtering
+          },
+        };
+      });
 
       const flowEdges: FlowEdge[] = loadedWorkflow.edges.map((edge) => ({
         id: edge.id,
@@ -455,9 +453,30 @@ function WorkflowsPageContent() {
     logs: SimulationLogEntry[];
     completedAt?: string;
   }>({ status: "idle", logs: [] });
+  const [showConnectorWarning, setShowConnectorWarning] = useState(false);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const selectedNodeAccent = selectedNode
+    ? accentStyles[selectedNode.data.accent]
+    : null;
+
   const edgeTypes = useMemo(() => ({ configEdge: ConfigEdge }), []);
+
+  // Handle node deletion
+  const handleDeleteNode = useCallback((nodeId: string) => {
+    // Remove the node
+    setNodes((prevNodes) => prevNodes.filter((n) => n.id !== nodeId));
+
+    // Remove all edges connected to this node
+    setEdgesRaw((prevEdges) =>
+      prevEdges.filter((edge) =>
+        edge.source !== nodeId && edge.target !== nodeId
+      )
+    );
+
+    // Clear selection
+    setSelectedNodeId(null);
+  }, []);
 
   // Get validation results
   const validation = useFlowValidation(nodes, edgesRaw);
@@ -465,6 +484,37 @@ function WorkflowsPageContent() {
   useEffect(() => {
     setSelectedNodeId((prev) => prev ?? nodes[0]?.id ?? null);
   }, [nodes]);
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Delete or Backspace key
+      if (
+        (event.key === "Delete" || event.key === "Backspace") && selectedNodeId
+      ) {
+        // Check if we're not in an input field
+        const target = event.target as HTMLElement;
+        if (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA") {
+          event.preventDefault();
+          handleDeleteNode(selectedNodeId);
+        }
+      }
+      // Escape key to deselect
+      if (event.key === "Escape" && selectedNodeId) {
+        setSelectedNodeId(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedNodeId, handleDeleteNode]);
+
+  // Clear selection if selected node no longer exists
+  useEffect(() => {
+    if (selectedNodeId && !nodes.find((n) => n.id === selectedNodeId)) {
+      setSelectedNodeId(null);
+    }
+  }, [nodes, selectedNodeId]);
 
   // Helper function to convert FlowNodes back to API format
   const convertToApiFormat = useCallback(() => {
@@ -774,6 +824,100 @@ function WorkflowsPageContent() {
     [],
   );
 
+  const handleConnectorActionSelect = useCallback(
+    async (nodeId: string, data: {
+      connectorId: string;
+      actionId: string;
+      integrationId: string;
+      connectorName: string;
+      actionName: string;
+      integrationName: string;
+    }) => {
+      // Fetch the action details to get parameters
+      try {
+        const actionDetails = await getConnectorAction(
+          data.connectorId,
+          data.actionId,
+        );
+
+        // Convert action parameters to config fields
+        const actionConfigFields: NodeConfigField[] =
+          actionDetails.parameters?.map((param) => ({
+            id: param.name,
+            label: param.name.split("_").map((w) =>
+              w.charAt(0).toUpperCase() + w.slice(1)
+            ).join(" "),
+            type: param.type === "integer"
+              ? "text"
+              : param.type === "string"
+              ? "text"
+              : "textarea",
+            required: param.required,
+            placeholder: param.description,
+            helperText: param.description,
+          })) || [];
+
+        setNodes((prevNodes) =>
+          prevNodes.map((node) =>
+            node.id === nodeId
+              ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  subtitle: `${data.connectorName} - ${data.actionName}`,
+                  status: node.data.status === "attention"
+                    ? "pending"
+                    : node.data.status,
+                  config: {
+                    ...node.data.config,
+                    connectorId: data.connectorId,
+                    actionId: data.actionId,
+                    integrationId: data.integrationId,
+                    connectorName: data.connectorName,
+                    actionName: data.actionName,
+                    integrationName: data.integrationName,
+                  },
+                  configFields: actionConfigFields,
+                },
+              }
+              : node
+          )
+        );
+        setShowConnectorWarning(false);
+      } catch (error) {
+        console.error("Failed to fetch action details:", error);
+        // Still update with basic info even if action fetch fails
+        setNodes((prevNodes) =>
+          prevNodes.map((node) =>
+            node.id === nodeId
+              ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  subtitle: `${data.connectorName} - ${data.actionName}`,
+                  status: node.data.status === "attention"
+                    ? "pending"
+                    : node.data.status,
+                  config: {
+                    ...node.data.config,
+                    connectorId: data.connectorId,
+                    actionId: data.actionId,
+                    integrationId: data.integrationId,
+                    connectorName: data.connectorName,
+                    actionName: data.actionName,
+                    integrationName: data.integrationName,
+                  },
+                },
+              }
+              : node
+          )
+        );
+        setShowConnectorWarning(false);
+      }
+    },
+    [setShowConnectorWarning],
+  );
+
   const addNodeFromTemplate = useCallback(
     (templateId: string) => {
       // Find template from backend node types or fallback to local templates
@@ -812,7 +956,9 @@ function WorkflowsPageContent() {
               : field.type as "text" | "email" | "textarea" | "multi",
             required: field.required,
             placeholder: field.placeholder,
+            helperText: field.helperText,
           })),
+          requiresConnectorSelection: Boolean(backendNodeDef.service_type),
         };
       } else {
         // Fallback to local template
@@ -860,6 +1006,9 @@ function WorkflowsPageContent() {
           config: { ...template.defaultConfig },
           configFields: template.configFields.map((field) => ({ ...field })),
           connectors,
+          requiresConnectorSelection: template.requiresConnectorSelection ??
+            false,
+          serviceType: backendNodeDef?.service_type, // Add service type for connector filtering
         },
       };
 
@@ -1035,274 +1184,247 @@ function WorkflowsPageContent() {
 
             <Card className="border-white/10 bg-[#101322]">
               <CardHeader className="pb-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base">
-                      {selectedNode ? "Configuration" : "Add Node"}
-                    </CardTitle>
-                    <CardDescription>
-                      {selectedNode
-                        ? selectedNode.data.label
-                        : "Click to add to canvas"}
-                    </CardDescription>
-                  </div>
-                  {selectedNode && (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setSelectedNodeId(null)}
-                        className="h-8 w-8 p-0 text-white/60 hover:text-white"
-                        title="Close"
-                      >
-                        <Plus className="h-4 w-4 rotate-45" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 gap-2 px-2 text-xs text-red-300"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" /> Delete
-                      </Button>
-                    </div>
-                  )}
+                <div>
+                  <CardTitle className="text-base">
+                    {selectedNode &&
+                        selectedNode.data.requiresConnectorSelection &&
+                        !selectedNode.data.config.actionId
+                      ? `Configure ${selectedNode.data.label}`
+                      : "Node Library"}
+                  </CardTitle>
+                  <CardDescription>
+                    {selectedNode &&
+                        selectedNode.data.requiresConnectorSelection &&
+                        !selectedNode.data.config.actionId
+                      ? "Select an integration and action"
+                      : "Click to add connectors to your workflow"}
+                  </CardDescription>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-6">
-                {selectedNode
+              <CardContent className="max-h-[68vh] space-y-3 overflow-y-auto pr-2">
+                {selectedNode && selectedNode.data.requiresConnectorSelection &&
+                    !selectedNode.data.config.actionId
                   ? (
-                    <>
-                      <div className="rounded-2xl border border-white/10 bg-[#0C0F1C] px-4 py-3">
-                        <p className="text-sm font-semibold text-white">
-                          {selectedNode.data.label}
-                        </p>
-                        <p className="text-xs text-white/50">
-                          {selectedNode.data.subtitle}
-                        </p>
-                        {selectedNode.data.helperText
-                          ? (
-                            <div className="mt-3 flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">
-                              <Sparkles className="h-3.5 w-3.5 text-white/50" />
-                              {selectedNode.data.helperText}
-                            </div>
-                          )
-                          : null}
-                      </div>
-
-                      <div className="space-y-4">
-                        {selectedNode.data.configFields?.map((field) => {
-                          const value = selectedNode.data.config[field.id] ??
-                            "";
-                          return (
-                            <div key={field.id}>
-                              <label className="block text-xs font-semibold uppercase tracking-wide text-white/50">
-                                {field.label}
-                                {field.required
-                                  ? <span className="text-rose-300">*</span>
-                                  : null}
-                              </label>
-                              {field.helperText
-                                ? (
-                                  <p className="mt-0.5 text-[11px] text-white/35">
-                                    {field.helperText}
-                                  </p>
-                                )
-                                : null}
-                              {field.type === "textarea"
-                                ? (
-                                  <textarea
-                                    value={value}
-                                    onChange={(event) =>
-                                      updateNodeConfig(
-                                        selectedNode.id,
-                                        field.id,
-                                        event.target.value,
-                                      )}
-                                    placeholder={field.placeholder}
-                                    className="mt-2 min-h-[120px] w-full rounded-xl border border-white/12 bg-transparent px-3 py-2 text-sm text-white placeholder:text-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
-                                  />
-                                )
-                                : (
-                                  <Input
-                                    type={field.type === "multi"
-                                      ? "text"
-                                      : field.type}
-                                    value={value}
-                                    placeholder={field.placeholder}
-                                    onChange={(event) =>
-                                      updateNodeConfig(
-                                        selectedNode.id,
-                                        field.id,
-                                        event.target.value,
-                                      )}
-                                    className="mt-2"
-                                  />
-                                )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </>
+                    /* Show Connector Action Selector when node needs configuration */
+                    <ConnectorActionSelector
+                      nodeId={selectedNode.id}
+                      serviceType={selectedNode.data.serviceType}
+                      nodeDefinition={nodeTypesData
+                        ? [
+                          ...nodeTypesData.trigger,
+                          ...nodeTypesData.action,
+                          ...nodeTypesData.data,
+                          ...nodeTypesData.logic,
+                          ...nodeTypesData.ai,
+                        ].find((n) => n.id === selectedNode.data.serviceType)
+                        : undefined}
+                      currentSelection={{
+                        connectorId: selectedNode.data.config.connectorId,
+                        actionId: selectedNode.data.config.actionId,
+                        integrationId: selectedNode.data.config.integrationId,
+                      }}
+                      onSelect={(data) =>
+                        handleConnectorActionSelect(selectedNode.id, data)}
+                    />
                   )
-                  : (
-                    <div className="max-h-[68vh] space-y-3 overflow-y-auto pr-2">
-                      {isLoadingNodeTypes
-                        ? (
-                          <div className="flex items-center justify-center py-8">
-                            <div className="text-center">
-                              <div className="inline-block h-6 w-6 animate-spin rounded-full border-3 border-solid border-current border-r-transparent" />
-                              <p className="mt-2 text-xs text-white/40">
-                                Loading node types...
-                              </p>
+                  : isLoadingNodeTypes
+                  ? (
+                    /* Loading state */
+                    <div className="flex items-center justify-center py-8">
+                      <div className="text-center">
+                        <div className="inline-block h-6 w-6 animate-spin rounded-full border-3 border-solid border-current border-r-transparent" />
+                        <p className="mt-2 text-xs text-white/40">
+                          Loading node types...
+                        </p>
+                      </div>
+                    </div>
+                  )
+                  : nodeTypesData
+                  ? (
+                    /* Node Library */
+                    ["trigger", "data", "logic", "ai", "action"].map(
+                      (category) => {
+                        const categoryKey =
+                          category as keyof typeof nodeTypesData;
+                        const categoryNodes = nodeTypesData[categoryKey] || [];
+
+                        if (categoryNodes.length === 0) return null;
+
+                        return (
+                          <div key={category}>
+                            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">
+                              {category}
+                            </h3>
+                            <div className="space-y-2">
+                              {categoryNodes.map((nodeDef) => {
+                                const Icon = getIconForCategory(
+                                  nodeDef.category,
+                                );
+                                const accent = accentStyles[
+                                  getAccentForCategory(nodeDef.category)
+                                ];
+
+                                return (
+                                  <button
+                                    key={nodeDef.id}
+                                    onClick={() =>
+                                      addNodeFromTemplate(nodeDef.id)}
+                                    className={cn(
+                                      "group w-full rounded-xl border p-3 text-left transition-all",
+                                      nodeDef.activated
+                                        ? "border-white/10 bg-[#0C0F1C] hover:border-white/20 hover:bg-[#121527]"
+                                        : "border-white/5 bg-[#0C0F1C]/50 hover:border-white/10 hover:bg-[#0C0F1C]",
+                                    )}
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <div
+                                        className={cn(
+                                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
+                                          accent.icon,
+                                          !nodeDef.activated && "opacity-50",
+                                        )}
+                                      >
+                                        {nodeDef.icon
+                                          ? (
+                                            <span className="text-lg">
+                                              {nodeDef.icon}
+                                            </span>
+                                          )
+                                          : <Icon className="h-4 w-4" />}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <p
+                                            className={cn(
+                                              "text-sm font-semibold",
+                                              nodeDef.activated
+                                                ? "text-white"
+                                                : "text-white/50",
+                                            )}
+                                          >
+                                            {nodeDef.label}
+                                          </p>
+                                          <Badge
+                                            className={cn(
+                                              "h-5 rounded-md px-2 text-[10px] font-medium",
+                                              accent.chip,
+                                              !nodeDef.activated &&
+                                                "opacity-50",
+                                            )}
+                                          >
+                                            {getChipTextForCategory(
+                                              nodeDef.category,
+                                            )}
+                                          </Badge>
+                                          {nodeDef.activated === false && (
+                                            <Badge className="h-5 rounded-md px-2 text-[10px] font-medium bg-amber-500/15 text-amber-300 border-amber-500/20">
+                                              No Integration
+                                            </Badge>
+                                          )}
+                                        </div>
+                                        {nodeDef.service_type && (
+                                          <p
+                                            className={cn(
+                                              "mt-0.5 text-xs",
+                                              nodeDef.activated
+                                                ? "text-white/50"
+                                                : "text-white/30",
+                                            )}
+                                          >
+                                            {nodeDef.service_type}
+                                          </p>
+                                        )}
+                                        <p
+                                          className={cn(
+                                            "mt-1 text-xs",
+                                            nodeDef.activated
+                                              ? "text-white/40"
+                                              : "text-white/25",
+                                          )}
+                                        >
+                                          {nodeDef.description}
+                                        </p>
+                                        {nodeDef.activated === false && (
+                                          <p className="mt-2 text-xs text-amber-300/70">
+                                            → Create integration first
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
                             </div>
                           </div>
-                        )
-                        : nodeTypesData
-                        ? (
-                          // Render backend node types
-                          ["trigger", "data", "logic", "ai", "action"].map(
-                            (category) => {
-                              const categoryKey =
-                                category as keyof typeof nodeTypesData;
-                              const categoryNodes =
-                                nodeTypesData[categoryKey] || [];
+                        );
+                      },
+                    )
+                  )
+                  : (
+                    ["trigger", "data", "logic", "ai", "action"].map(
+                      (category) => {
+                        const categoryNodes = nodeTemplates.filter(
+                          (template) => template.category === category,
+                        );
 
-                              if (categoryNodes.length === 0) return null;
+                        if (categoryNodes.length === 0) return null;
 
-                              return (
-                                <div key={category}>
-                                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">
-                                    {category}
-                                  </h3>
-                                  <div className="space-y-2">
-                                    {categoryNodes.map((nodeDef) => {
-                                      const Icon = getIconForCategory(
-                                        nodeDef.category,
-                                      );
-                                      const accent = accentStyles[
-                                        getAccentForCategory(nodeDef.category)
-                                      ];
+                        return (
+                          <div key={category}>
+                            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">
+                              {category}
+                            </h3>
+                            <div className="space-y-2">
+                              {categoryNodes.map((template) => {
+                                const Icon = template.icon;
+                                const accent = accentStyles[template.accent];
 
-                                      return (
-                                        <button
-                                          key={nodeDef.id}
-                                          onClick={() =>
-                                            addNodeFromTemplate(nodeDef.id)}
-                                          className="group w-full rounded-xl border border-white/10 bg-[#0C0F1C] p-3 text-left transition-all hover:border-white/20 hover:bg-[#121527]"
-                                        >
-                                          <div className="flex items-start gap-3">
-                                            <div
-                                              className={cn(
-                                                "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
-                                                accent.icon,
-                                              )}
-                                            >
-                                              <Icon className="h-4 w-4" />
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                              <div className="flex items-center gap-2">
-                                                <p className="text-sm font-semibold text-white">
-                                                  {nodeDef.label}
-                                                </p>
-                                                <Badge
-                                                  className={cn(
-                                                    "h-5 rounded-md px-2 text-[10px] font-medium",
-                                                    accent.chip,
-                                                  )}
-                                                >
-                                                  {getChipTextForCategory(
-                                                    nodeDef.category,
-                                                  )}
-                                                </Badge>
-                                              </div>
-                                              {nodeDef.service_type && (
-                                                <p className="mt-0.5 text-xs text-white/50">
-                                                  {nodeDef.service_type}
-                                                </p>
-                                              )}
-                                              <p className="mt-1 text-xs text-white/40">
-                                                {nodeDef.description}
-                                              </p>
-                                            </div>
-                                          </div>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              );
-                            },
-                          )
-                        )
-                        : (
-                          // Fallback to local templates if backend fails
-                          ["trigger", "data", "logic", "ai", "action"].map(
-                            (category) => {
-                              const categoryNodes = nodeTemplates.filter(
-                                (template) => template.category === category,
-                              );
-
-                              if (categoryNodes.length === 0) return null;
-
-                              return (
-                                <div key={category}>
-                                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">
-                                    {category}
-                                  </h3>
-                                  <div className="space-y-2">
-                                    {categoryNodes.map((template) => {
-                                      const Icon = template.icon;
-                                      const accent =
-                                        accentStyles[template.accent];
-
-                                      return (
-                                        <button
-                                          key={template.id}
-                                          onClick={() =>
-                                            addNodeFromTemplate(template.id)}
-                                          className="group w-full rounded-xl border border-white/10 bg-[#0C0F1C] p-3 text-left transition-all hover:border-white/20 hover:bg-[#121527]"
-                                        >
-                                          <div className="flex items-start gap-3">
-                                            <div
-                                              className={cn(
-                                                "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
-                                                accent.icon,
-                                              )}
-                                            >
-                                              <Icon className="h-4 w-4" />
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                              <div className="flex items-center gap-2">
-                                                <p className="text-sm font-semibold text-white">
-                                                  {template.label}
-                                                </p>
-                                                <Badge
-                                                  className={cn(
-                                                    "h-5 rounded-md px-2 text-[10px] font-medium",
-                                                    accent.chip,
-                                                  )}
-                                                >
-                                                  {template.chipText}
-                                                </Badge>
-                                              </div>
-                                              <p className="mt-0.5 text-xs text-white/50">
-                                                {template.subtitle}
-                                              </p>
-                                              <p className="mt-1 text-xs text-white/40">
-                                                {template.description}
-                                              </p>
-                                            </div>
-                                          </div>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              );
-                            },
-                          )
-                        )}
-                    </div>
+                                return (
+                                  <button
+                                    key={template.id}
+                                    onClick={() =>
+                                      addNodeFromTemplate(template.id)}
+                                    className="group w-full rounded-xl border border-white/10 bg-[#0C0F1C] p-3 text-left transition-all hover:border-white/20 hover:bg-[#121527]"
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <div
+                                        className={cn(
+                                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors",
+                                          accent.icon,
+                                        )}
+                                      >
+                                        <Icon className="h-4 w-4" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <p className="text-sm font-semibold text-white">
+                                            {template.label}
+                                          </p>
+                                          <Badge
+                                            className={cn(
+                                              "h-5 rounded-md px-2 text-[10px] font-medium",
+                                              accent.chip,
+                                            )}
+                                          >
+                                            {template.chipText}
+                                          </Badge>
+                                        </div>
+                                        <p className="mt-0.5 text-xs text-white/50">
+                                          {template.subtitle}
+                                        </p>
+                                        <p className="mt-1 text-xs text-white/40">
+                                          {template.description}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      },
+                    )
                   )}
               </CardContent>
             </Card>
