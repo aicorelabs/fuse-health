@@ -1,0 +1,87 @@
+// Fuse-home Prisma schema
+// Models are intentionally minimal — extend as the workflow engine takes shape.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workflows Workflow[]
+}
+
+model Workflow {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  graph       Json
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  runs WorkflowRun[]
+
+  @@index([ownerId])
+}
+
+model WorkflowRun {
+  id         String        @id @default(cuid())
+  workflowId String
+  workflow   Workflow      @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status     RunStatus     @default(PENDING)
+  input      Json?
+  output     Json?
+  error      String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime      @default(now())
+
+  steps WorkflowStepRun[]
+
+  @@index([workflowId, createdAt])
+}
+
+model WorkflowStepRun {
+  id        String     @id @default(cuid())
+  runId     String
+  run       WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepId    String
+  status    RunStatus  @default(PENDING)
+  input     Json?
+  output    Json?
+  error     String?
+  startedAt DateTime?
+  finishedAt DateTime?
+
+  @@index([runId])
+}
+
+model McpServer {
+  id        String   @id @default(cuid())
+  name      String
+  kind      String
+  config    Json
+  ownerId   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
