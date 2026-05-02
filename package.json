@@ -7,13 +7,16 @@
     "node": ">=20.12.0"
   },
   "scripts": {
-    "dev": "pnpm -r --parallel --filter=./apps/* dev",
+    "dev": "pnpm --filter @fuse/web dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @fuse/db generate",
     "db:migrate": "pnpm --filter @fuse/db migrate",
-    "db:studio": "pnpm --filter @fuse/db studio"
+    "db:studio": "pnpm --filter @fuse/db studio",
+    "compose:up": "docker compose up -d",
+    "compose:down": "docker compose down",
+    "hash-password": "pnpm --filter @fuse/web exec tsx scripts/hash-password.ts"
   },
   "devDependencies": {
     "typescript": "^5.6.3"

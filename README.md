@@ -1,42 +1,55 @@
 # fuse-home
 
-AI-native workflow automation platform with first-class MCP (Model Context Protocol) servers and a visual builder.
+AI-native workflow automation for healthcare. Self-hostable, open source, MCP-ready.
 
 ## Stack
 
 - **Language:** TypeScript (strict)
-- **Frontend:** Next.js 15 (App Router) + Tailwind + React Flow
-- **Backend:** Next.js API routes / server actions + a separate Node worker
-- **DB:** Postgres via Prisma (Supabase)
-- **Auth:** Supabase Auth (`@supabase/ssr`)
-- **Queue:** BullMQ + Redis (Upstash)
-- **LLM:** Anthropic SDK (Claude) + Vercel AI SDK
-- **Monorepo:** pnpm workspaces
+- **App:** Next.js 15 (App Router), Tailwind, React Flow editor
+- **DB:** Postgres via Prisma (local in Docker)
+- **Auth:** env-based admin login, JWT cookie via `jose`
+- **LLM:** Anthropic SDK (Claude)
+- **Distribution:** `docker compose up`
+- **License:** Apache-2.0
 
 ## Layout
 
 ```
 apps/
-  web/        Next.js app (UI + API)
-  worker/     Workflow execution worker (BullMQ)
+  web/             Next.js app — UI, API, workflow execution (in-process)
 packages/
-  core/       Shared types, workflow + template engine
-  db/         Prisma schema + client
-  mcp/        MCP server implementations
+  core/            Shared types, workflow + template engine
+  connectors/      Hardcoded API connectors (mock for v1; real integrations later)
+  db/              Prisma schema + client
+docs/
+  workflow-execution.md   v1 execution spec
 ```
 
-## Prerequisites
-
-- Node 20.12+ (`.nvmrc`)
-- pnpm 9 (auto-managed via corepack — `corepack enable`)
-- Postgres + Redis (Supabase + Upstash recommended)
+No `User` table (single admin via env). No `Patient` table (params supplied at trigger).
+Workflow execution runs in the Next.js process for v1 — no separate worker, no Redis.
 
 ## Getting started
 
 ```bash
 corepack enable
 pnpm install
-cp .env.example .env   # then fill in values
+
+# 1. Postgres up
+pnpm compose:up
+
+# 2. Configure env
+cp .env.example .env
+pnpm hash-password '<your-admin-password>'   # paste output into ADMIN_PASSWORD_HASH
+openssl rand -hex 32                          # paste output into SESSION_SECRET
+
+# 3. Migrate + run
 pnpm db:generate
+pnpm --filter @fuse/db exec prisma migrate dev --name init
 pnpm dev
 ```
+
+Open http://localhost:3000 → log in with `ADMIN_EMAIL` + the password you hashed.
+
+## Spec
+
+See `docs/workflow-execution.md` for the v1 execution model.
