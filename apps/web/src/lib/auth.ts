@@ -6,6 +6,10 @@ export interface AdminCheckResult {
   reason?: "no-config" | "wrong-email" | "wrong-password";
 }
 
+function normalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export async function checkAdminCredentials(
   email: string,
   password: string,
@@ -16,12 +20,14 @@ export async function checkAdminCredentials(
   if (!adminEmail || !adminHash) {
     return { ok: false, reason: "no-config" };
   }
-  if (email !== adminEmail) {
+
+  const normalized = normalizeEmail(email);
+  if (normalized !== normalizeEmail(adminEmail)) {
     return { ok: false, reason: "wrong-email" };
   }
   const matches = await bcrypt.compare(password, adminHash);
   if (!matches) {
     return { ok: false, reason: "wrong-password" };
   }
-  return { ok: true, email };
+  return { ok: true, email: normalized };
 }
