@@ -17,6 +17,7 @@ import {
 } from "../workflows/[id]/route.js";
 import { GET as getRunById } from "../runs/[id]/route.js";
 import { POST as postRun } from "../runs/route.js";
+import { GET as getLastRunOutput } from "../workflows/[id]/last-run-output/route.js";
 
 const TEST_WORKFLOW_ID = `wf_test_routes_${randomUUID()}`;
 let testRunId = "";
@@ -316,5 +317,87 @@ describe("DELETE /api/workflows/[id]", () => {
     // cleanup
     await prisma.workflowRun.deleteMany({ where: { workflowId: id } });
     await prisma.workflow.deleteMany({ where: { id } });
+  });
+});
+
+describe("GET /api/workflows/[id]/last-run-output", () => {
+  it("404 when no runs exist for the workflow", async () => {
+    const id = `wf_test_lro_empty_${randomUUID()}`;
+    await prisma.workflow.create({
+      data: { id, name: "empty", graph: MIN_GRAPH as never, maxConcurrent: 5 },
+    });
+    try {
+      const res = await getLastRunOutput(new Request("http://localhost"), {
+        params: Promise.resolve({ id }),
+      });
+      expect(res.status).toBe(404);
+    } finally {
+      await prisma.workflow.deleteMany({ where: { id } });
+    }
+  });
+
+  it("404 when only PENDING / RUNNING / FAILED runs exist", async () => {
+    const id = `wf_test_lro_nope_${randomUUID()}`;
+    await prisma.workflow.create({
+      data: { id, name: "n", graph: MIN_GRAPH as never, maxConcurrent: 5 },
+    });
+    await prisma.workflowRun.create({
+      data: { workflowId: id, status: "FAILED", input: {} as never },
+    });
+    try {
+      const res = await getLastRunOutput(new Request("http://localhost"), {
+        params: Promise.resolve({ id }),
+      });
+      expect(res.status).toBe(404);
+    } finally {
+      await prisma.workflowRun.deleteMany({ where: { workflowId: id } });
+      await prisma.workflow.deleteMany({ where: { id } });
+    }
+  });
+
+  it("returns the most recent SUCCEEDED run's input + output", async () => {
+    const id = `wf_test_lro_ok_${randomUUID()}`;
+    await prisma.workflow.create({
+      data: { id, name: "ok", graph: MIN_GRAPH as never, maxConcurrent: 5 },
+    });
+
+    // older succeeded run
+    await prisma.workflowRun.create({
+      data: {
+        workflowId: id,
+        status: "SUCCEEDED",
+        input: { patientId: "older" } as never,
+        output: { tag: "older" } as never,
+        finishedAt: new Date(Date.now() - 60_000),
+      },
+    });
+    // newer succeeded run
+    await prisma.workflowRun.create({
+      data: {
+        workflowId: id,
+        status: "SUCCEEDED",
+        input: { patientId: "newer" } as never,
+        output: { tag: "newer", getLabs: { results: [] } } as never,
+        finishedAt: new Date(),
+      },
+    });
+
+    try {
+      const res = await getLastRunOutput(new Request("http://localhost"), {
+        params: Promise.resolve({ id }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        input: { patientId: string };
+        output: Record<string, unknown>;
+        status: string;
+      };
+      expect(body.status).toBe("SUCCEEDED");
+      expect(body.input.patientId).toBe("newer");
+      expect(body.output["tag"]).toBe("newer");
+    } finally {
+      await prisma.workflowRun.deleteMany({ where: { workflowId: id } });
+      await prisma.workflow.deleteMany({ where: { id } });
+    }
   });
 });

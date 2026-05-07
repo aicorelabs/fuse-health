@@ -2,7 +2,7 @@
 
 import type { NodeKind } from "@fuse/core";
 
-import type { WorkflowFlowNode } from "@/lib/editor/graphConvert";
+import type { GraphLike, WorkflowFlowNode } from "@/lib/editor/graphConvert";
 
 import { KIND_LABELS } from "./constants";
 import { ActionForm } from "./forms/ActionForm";
@@ -19,9 +19,13 @@ import { TriggerScheduleForm } from "./forms/TriggerScheduleForm";
 import { TriggerWebhookForm } from "./forms/TriggerWebhookForm";
 import { WaitForm } from "./forms/WaitForm";
 import { FormField, inputClass } from "./forms/_FormField";
+import { ScopePanel, type LastRunSample } from "./ScopePanel";
 
 export interface NodeConfigPanelProps {
   selectedNode: WorkflowFlowNode | null;
+  graph: GraphLike;
+  sample: LastRunSample | null;
+  sampleStatus: "idle" | "loading" | "ready" | "missing";
   onPatch: (id: string, patch: { name?: string; config?: unknown }) => void;
   onDelete: (id: string) => void;
   onCaseRename: (branchId: string, oldLabel: string, newLabel: string) => void;
@@ -30,6 +34,9 @@ export interface NodeConfigPanelProps {
 
 export function NodeConfigPanel({
   selectedNode,
+  graph,
+  sample,
+  sampleStatus,
   onPatch,
   onDelete,
   onCaseRename,
@@ -37,12 +44,13 @@ export function NodeConfigPanel({
 }: NodeConfigPanelProps) {
   if (!selectedNode) {
     return (
-      <aside className="hidden w-80 shrink-0 border-l border-neutral-200 bg-white p-4 lg:block dark:border-neutral-800 dark:bg-neutral-900">
-        <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+      <aside className="hidden w-80 shrink-0 border-l border-stone-200 bg-white p-5 lg:block dark:border-stone-800 dark:bg-stone-900">
+        <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-stone-500 dark:text-stone-400">
           Inspector
         </div>
-        <div className="mt-2 text-sm text-neutral-500">
-          Select a node to configure.
+        <div className="mt-2 text-[12.5px] leading-relaxed text-stone-500 dark:text-stone-500">
+          Select a node to configure. Its scope, refs, and sample data appear
+          here.
         </div>
       </aside>
     );
@@ -57,13 +65,17 @@ export function NodeConfigPanel({
   }
 
   return (
-    <aside className="hidden w-80 shrink-0 flex-col overflow-y-auto border-l border-neutral-200 bg-white p-4 lg:flex dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
-        {KIND_LABELS[kind] ?? kind}
-      </div>
-      <div className="mt-1 font-mono text-xs text-neutral-500">{id}</div>
+    <aside className="hidden w-80 shrink-0 flex-col overflow-y-auto border-l border-stone-200 bg-white lg:flex dark:border-stone-800 dark:bg-stone-900">
+      <header className="border-b border-stone-100 px-5 py-3 dark:border-stone-800/60">
+        <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-stone-500 dark:text-stone-400">
+          {KIND_LABELS[kind] ?? kind}
+        </div>
+        <div className="mt-0.5 font-mono text-[11px] tabular text-stone-400 dark:text-stone-500">
+          {id}
+        </div>
+      </header>
 
-      <div className="mt-4 space-y-3">
+      <div className="space-y-6 px-5 py-4">
         <FormField label="Name">
           <input
             type="text"
@@ -76,13 +88,25 @@ export function NodeConfigPanel({
         {renderForm(kind, id, config, setConfig, onCaseRename, onCaseRemove)}
       </div>
 
-      <button
-        type="button"
-        onClick={() => onDelete(id)}
-        className="mt-6 self-start rounded-md border border-neutral-300 px-2.5 py-1 text-xs text-neutral-600 hover:border-rose-400 hover:text-rose-600 dark:border-neutral-700 dark:text-neutral-400"
-      >
-        Delete node
-      </button>
+      <div className="border-t border-stone-100 px-5 py-4 dark:border-stone-800/60">
+        <ScopePanel
+          graph={graph}
+          nodeId={id}
+          config={config}
+          sample={sample}
+          sampleStatus={sampleStatus}
+        />
+      </div>
+
+      <div className="mt-auto border-t border-stone-100 px-5 py-3 dark:border-stone-800/60">
+        <button
+          type="button"
+          onClick={() => onDelete(id)}
+          className="rounded-sm border border-stone-200 px-2.5 py-1 text-[11.5px] text-stone-600 transition-colors hover:border-rose-400 hover:text-rose-600 dark:border-stone-800 dark:text-stone-400"
+        >
+          Delete node
+        </button>
+      </div>
     </aside>
   );
 }

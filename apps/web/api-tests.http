@@ -183,3 +183,9 @@ DELETE {{host}}/api/workflows/{{createdId}}
 ###
 # 404 — delete unknown id
 DELETE {{host}}/api/workflows/wf_does_not_exist
+
+###
+# Last successful run's input + output — feeds the editor inspector's
+# "Variables in scope" sample panels. 404 if no SUCCEEDED run yet.
+# curl http://localhost:3000/api/workflows/wf_demo_patient_summary/last-run-output
+GET {{host}}/api/workflows/{{workflowId}}/last-run-output

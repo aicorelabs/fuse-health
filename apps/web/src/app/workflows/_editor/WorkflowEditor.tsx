@@ -2,7 +2,7 @@
 
 import "reactflow/dist/style.css";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ReactFlowProvider,
   addEdge,
@@ -35,6 +35,7 @@ import { Canvas } from "./Canvas";
 import { isTriggerKind } from "./constants";
 import { NodeConfigPanel } from "./NodeConfigPanel";
 import { NodePalette } from "./NodePalette";
+import type { LastRunSample } from "./ScopePanel";
 import { Toolbar } from "./Toolbar";
 
 export interface EditorWorkflow {
@@ -68,6 +69,10 @@ function EditorInner({ mode, workflow }: WorkflowEditorProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [name, setName] = useState(workflow.name);
   const [description, setDescription] = useState(workflow.description);
+  const [sample, setSample] = useState<LastRunSample | null>(null);
+  const [sampleStatus, setSampleStatus] = useState<
+    "idle" | "loading" | "ready" | "missing"
+  >("idle");
 
   const { screenToFlowPosition } = useReactFlow();
 
@@ -80,6 +85,46 @@ function EditorInner({ mode, workflow }: WorkflowEditorProps) {
   );
 
   const validation = useMemo(() => validateForSave(liveGraph), [liveGraph]);
+
+  // Fetch last successful run's input + output once on mount (update mode only)
+  // so the inspector can show real shapes for upstream node references.
+  useEffect(() => {
+    if (mode !== "update" || !workflow.id) return;
+    let cancelled = false;
+    setSampleStatus("loading");
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/workflows/${workflow.id}/last-run-output`,
+          { cache: "no-store" },
+        );
+        if (cancelled) return;
+        if (res.status === 404) {
+          setSampleStatus("missing");
+          return;
+        }
+        if (!res.ok) {
+          setSampleStatus("missing");
+          return;
+        }
+        const body = (await res.json()) as {
+          input: unknown;
+          output: unknown;
+        };
+        setSample({
+          triggerInput: body.input,
+          nodeOutputs:
+            (body.output as Record<string, unknown> | null) ?? {},
+        });
+        setSampleStatus("ready");
+      } catch {
+        if (!cancelled) setSampleStatus("missing");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, workflow.id]);
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -244,6 +289,9 @@ function EditorInner({ mode, workflow }: WorkflowEditorProps) {
         </div>
         <NodeConfigPanel
           selectedNode={selectedNode as WorkflowFlowNode | null}
+          graph={liveGraph}
+          sample={sample}
+          sampleStatus={sampleStatus}
           onPatch={patchNode}
           onDelete={deleteNode}
           onCaseRename={handleCaseRename}
