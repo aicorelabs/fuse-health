@@ -38,7 +38,8 @@ Response (immediate):
 The engine does this in order:
 
 1. Loads the workflow.
-2. Inserts a `WorkflowRun` row (status `PENDING`, with the input payload).
+2. Inserts a `WorkflowRun` row (status `PENDING`, with the input payload **and
+   a `graphSnapshot` copy of the workflow's graph at start time**).
 3. Returns `{ runId, status: "PENDING" }` to the caller.
 4. Schedules `runInBackground` on the same Node process — not awaited.
 
@@ -46,9 +47,16 @@ The engine does this in order:
 
 1. Acquires a per-workflow concurrency slot (see Concurrency).
 2. Marks the run `RUNNING`, sets `startedAt`.
-3. Hydrates the graph and invokes the executor.
+3. Hydrates the graph **from `WorkflowRun.graphSnapshot`** (falling back to
+   the live `Workflow.graph` for legacy rows where the snapshot is null) and
+   invokes the executor.
 4. On terminal state, updates the run row (`SUCCEEDED` + `output` map, or
    `FAILED` + `error` message) and releases the slot.
+
+**Versioning via snapshot.** Editing a workflow updates its `graph` in place,
+but in-flight runs continue against the version they hydrated at start. The
+run-detail UI reads the snapshot too, so a run displayed weeks later shows
+the graph it actually ran with — not the current edited one.
 
 The dashboard polls `GET /api/runs/{id}` every 1–2s while a run is in
 flight. Streaming (SSE/WebSockets) is out of scope for v1.
@@ -60,7 +68,7 @@ A run is started with a JSON `input` payload — usually an object like
 inside templates as `{{ trigger.input.<field> }}`.
 
 For batch processing, pass an array; the workflow author uses a `loop` node
-to fan out per item. (Loop is currently stubbed — see [nodes.md](nodes.md#loop-stubbed).)
+to fan out per item — see [nodes.md](nodes.md#loop).
 
 ### Templates
 
@@ -91,11 +99,17 @@ nodes do the same on their templated fields.
 
 The executor is a level-set BFS:
 
-1. Initial ready set = nodes whose incoming edges are all from completed
-   nodes (the trigger initially, since it has no incoming edges).
-2. Run every node in the ready set in **parallel** with `Promise.all`.
-3. Wait for the batch to settle, then re-compute the ready set.
-4. Repeat until the ready set is empty.
+1. Initial ready set = nodes whose incoming edges are all resolved (from
+   completed *or* skipped nodes; the trigger initially, since it has no
+   incoming edges).
+2. Of the ready set, nodes whose every incoming edge is closed (skipped
+   source or `skippedEdges` member) become **skipped** themselves — write a
+   `SKIPPED` step row, propagate skip-marking to outgoing edges, no node
+   logic runs.
+3. The rest run in **parallel** with `Promise.all`.
+4. Loop nodes are special-cased inside the parallel batch (see Loop section).
+5. Wait for the batch to settle, then re-compute the ready set.
+6. Repeat until the ready set is empty.
 
 This means independent branches fan out without cap. Three sibling action
 nodes (labs / radiology / ehr-notes) all fire in the same batch.
@@ -104,6 +118,48 @@ A node with multiple incoming edges waits for all of them (implicit join).
 The `merge` node is just a regular node that inspects its upstreams via the
 context and combines them under a chosen `mode`; the join itself is
 implicit in any node's "all incoming complete" gate.
+
+### Skipped-edge propagation
+
+`branch` and `filter` decide *not* to fire some of their outgoing edges. The
+executor tracks this with `skippedEdges: Set<edgeId>`:
+
+- `filter` whose condition resolves false → all outgoing edges added.
+- `branch` → every outgoing edge whose `condition` label doesn't equal the
+  matched case is added.
+
+A node downstream of skipped edges is itself skipped if **every** incoming
+edge is closed (source skipped *or* edge in `skippedEdges`). Skipping
+propagates: that node's outgoing edges are also marked, recursively closing
+the dead branch. A node with at least one *open* incoming edge runs normally
+— so a join after a branch where one path was taken still fires, with
+`ctx[skippedSource]` simply undefined.
+
+`SKIPPED` is one of the values of `RunStatus`. Skipped nodes get a step row
+just like succeeded ones, with `output` and `error` null and matching
+`startedAt`/`finishedAt` timestamps.
+
+### Per-iteration context frames (loop)
+
+`loop` is single-node-bodied in v1: the loop's single outgoing edge points at
+the body node. Iteration runs sequentially:
+
+1. Resolve `over` → must be an array.
+2. For each `item`, set `ctx[itemVar] = item`, then call the body's compute
+   logic *without* writing a per-iteration step row. Accumulate the body's
+   return into `bodyOutputs[]`.
+3. Restore the previous `ctx[itemVar]` (or delete it).
+4. Write **one** aggregate step row each for the loop and the body, with
+   `output = bodyOutputs`.
+5. Mark both the loop and body as completed; downstream of body fires once
+   with `ctx[bodyId] = bodyOutputs`.
+
+Two practical implications:
+
+- A loop is not parallel; if you need parallel fanout, structure with sibling
+  branches instead of a loop.
+- Two loops at the same DAG level that share an `itemVar` will collide
+  through `ctx`. Pick distinct names (`patient`, `study`, etc.).
 
 ### Concurrency cap (per workflow)
 
@@ -179,13 +235,13 @@ There is no `Return` node — the run output is always the full bag.
 
 ### What v1 still doesn't do
 
-- **Branch / Filter / Loop** — schemas + classes exist; executor stubs throw
-  `NotImplementedNodeError`. Wiring needs skipped-edge tracking and
-  per-iteration context frames; see the relevant sections in
-  [nodes.md](nodes.md).
 - **Cancellation** — there's no API to stop an in-flight run. The DB has a
   `CANCELLED` enum value reserved.
-- **Workflow versioning** — editing a workflow updates the row in place;
-  in-flight runs continue with the version they hydrated at start.
+- **Multi-step loop bodies** — `loop` v1 takes a single-node body. Multi-step
+  bodies need subgraph delimiters and are deferred.
+- **Nested loops** — body-of-loop cannot itself be a loop.
+- **Durable wait** — the `wait` node is in-process `setTimeout`; a server
+  restart kills the run. Long-running pauses (hours/days) need a DB-backed
+  scheduler.
 - **Streaming output / SSE** — polling only.
 - **Multi-instance coordination** — single Node process assumed.

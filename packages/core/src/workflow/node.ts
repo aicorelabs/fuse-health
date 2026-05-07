@@ -97,11 +97,39 @@ export const LLMNodeSchema = z.object({
   }),
 });
 
+export const ConditionOpSchema = z.enum([
+  "==",
+  "!=",
+  "===",
+  "!==",
+  ">",
+  "<",
+  ">=",
+  "<=",
+  "in",
+  "truthy",
+  "falsy",
+]);
+export type ConditionOp = z.infer<typeof ConditionOpSchema>;
+
+export const ConditionSchema = z.object({
+  left: z.unknown(),
+  op: ConditionOpSchema,
+  right: z.unknown().optional(),
+});
+export type Condition = z.infer<typeof ConditionSchema>;
+
 export const BranchNodeSchema = z.object({
   ...baseFields,
   kind: z.literal("branch"),
   config: z.object({
-    expression: z.string(),
+    cases: z.array(
+      z.object({
+        when: ConditionSchema,
+        edge: z.string().min(1),
+      }),
+    ),
+    default: z.string().optional(),
   }),
 });
 
@@ -109,7 +137,7 @@ export const FilterNodeSchema = z.object({
   ...baseFields,
   kind: z.literal("filter"),
   config: z.object({
-    condition: z.string(),
+    condition: ConditionSchema,
   }),
 });
 

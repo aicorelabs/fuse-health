@@ -13,12 +13,18 @@
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @fuse/db generate",
     "db:migrate": "pnpm --filter @fuse/db migrate",
+    "db:seed": "pnpm --filter @fuse/db seed",
     "db:studio": "pnpm --filter @fuse/db studio",
     "compose:up": "docker compose up -d",
     "compose:down": "docker compose down",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "hash-password": "pnpm --filter @fuse/web exec tsx scripts/hash-password.ts"
   },
   "devDependencies": {
-    "typescript": "^5.6.3"
+    "@vitest/coverage-v8": "^2.1.5",
+    "dotenv": "^17.4.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
   }
 }

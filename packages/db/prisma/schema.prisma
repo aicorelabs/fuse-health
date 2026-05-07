@@ -25,16 +25,17 @@ model Workflow {
 }
 
 model WorkflowRun {
-  id         String      @id @default(cuid())
-  workflowId String
-  workflow   Workflow    @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  status     RunStatus   @default(PENDING)
-  input      Json
-  output     Json?
-  error      String?
-  startedAt  DateTime?
-  finishedAt DateTime?
-  createdAt  DateTime    @default(now())
+  id            String    @id @default(cuid())
+  workflowId    String
+  workflow      Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status        RunStatus @default(PENDING)
+  input         Json
+  output        Json?
+  error         String?
+  graphSnapshot Json?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime  @default(now())
 
   steps WorkflowStepRun[]
 
@@ -62,4 +63,5 @@ enum RunStatus {
   SUCCEEDED
   FAILED
   CANCELLED
+  SKIPPED
 }

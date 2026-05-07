@@ -34,3 +34,6 @@ pnpm-debug.log*
 # turbo / next caches
 .turbo
 .vercel
+
+# claude code local state (per-machine, not part of the repo)
+.claude/

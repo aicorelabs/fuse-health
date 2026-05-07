@@ -19,9 +19,9 @@ schemas, classes, and editor surface are stable.
 | `action` | `ActionNode` | `{ integration, function, input }` | wired |
 | `http` | `HttpNode` | `{ method, url, headers?, query?, body?, timeoutMs? }` | wired |
 | `llm` | `LLMNode` | `{ prompt, model? }` | wired (Groq) |
-| `branch` | `BranchNode` | `{ expression }` | stubbed |
-| `filter` | `FilterNode` | `{ condition }` | stubbed |
-| `loop` | `LoopNode` | `{ over, itemVar? }` | stubbed |
+| `branch` | `BranchNode` | `{ cases, default? }` | wired |
+| `filter` | `FilterNode` | `{ condition }` | wired |
+| `loop` | `LoopNode` | `{ over, itemVar? }` | wired (single-node body) |
 | `merge` | `MergeNode` | `{ mode: "object" \| "array" \| "concat" }` | wired |
 | `set` | `SetNode` | `{ fields }` | wired |
 | `wait` | `WaitNode` | `{ seconds }` | wired |
@@ -117,26 +117,108 @@ Output:
 
 Reference downstream as `{{ summarize.text }}`.
 
-### `branch` *(stubbed)*
+### Conditions
 
-Multi-output conditional. Subsumes if-else and switch. Current schema is
-minimal (`{ expression }`); will be enriched to structured cases (left/op/
-right comparisons mapped to outgoing edge labels) when wired. Wiring requires
-executor changes for skipped-edge tracking — see workflow-execution.md.
+`branch` and `filter` share a structured condition shape (no string-eval, no
+sandbox needed):
 
-### `filter` *(stubbed)*
+```ts
+type Condition = {
+  left: unknown    // template-rendered
+  op: "==" | "!=" | "===" | "!==" | ">" | "<" | ">=" | "<=" | "in" | "truthy" | "falsy"
+  right?: unknown  // template-rendered (omitted for truthy/falsy)
+}
+```
 
-Terminal gate for one branch. If the rendered condition is truthy, downstream
-fires; otherwise this branch ends without affecting other branches. Distinct
-from `stop`, which terminates the whole run. Same executor traversal change
-needed as Branch.
+`left` and `right` are rendered through `renderValue` against the run context,
+so `{{ trigger.input.score }}` works in either side. Numeric comparisons use
+`Number(...)` coercion; `in` requires `right` to be an array.
 
-### `loop` *(stubbed)*
+### `branch`
 
-Iterates an upstream array, producing one execution of the loop body per item.
-Flat only — no nested loops in v1. `over` is a template ref (e.g.
-`{{ trigger.input.patients }}`), `itemVar` defaults to `item`. Wiring requires
-per-iteration context frames.
+Multi-output conditional. Outgoing edges carry a `condition` string that
+matches a case's `edge` label; the matching edge fires, the rest are
+skip-marked.
+
+```jsonc
+{
+  "kind": "branch",
+  "name": "Score router",
+  "config": {
+    "cases": [
+      { "when": { "left": "{{ trigger.input.score }}", "op": ">=", "right": 80 }, "edge": "high" },
+      { "when": { "left": "{{ trigger.input.score }}", "op": "<",  "right": 50 }, "edge": "low"  }
+    ],
+    "default": "mid"
+  }
+}
+```
+
+Cases evaluate in order — first match wins. If none match and `default` is
+set, the edge labeled with `default` fires. Otherwise all outgoing edges are
+skipped.
+
+Output: `{ matchedEdge: string | null }`. Each non-matching outgoing edge is
+recorded in the executor's `skippedEdges` set so downstream nodes are skipped
+(see [workflow-execution.md](workflow-execution.md#skipped-edge-propagation)).
+
+### `filter`
+
+Terminal gate for one branch. If the condition holds, downstream fires;
+otherwise the filter's outgoing edges are skip-marked and downstream is
+skipped (recursively). The filter step itself always succeeds — this is not
+the same as `stop`, which fails the entire run.
+
+```jsonc
+{
+  "kind": "filter",
+  "name": "Proceed only if labs requested",
+  "config": {
+    "condition": {
+      "left": "{{ trigger.input.includeLabs }}",
+      "op": "truthy"
+    }
+  }
+}
+```
+
+Output: `{ passed: boolean }`.
+
+### `loop`
+
+Iterates an upstream array, running a single-node body once per item.
+
+```jsonc
+{
+  "kind": "loop",
+  "name": "Per patient",
+  "config": {
+    "over": "{{ trigger.input.patients }}",
+    "itemVar": "patient"
+  }
+}
+```
+
+`over` resolves via `renderValue` and must be an array (otherwise the run
+fails). `itemVar` defaults to `"item"`. The loop's single outgoing edge points
+at the **body node** — the executor runs that node N times, sequentially,
+with `ctx[itemVar]` set to the current item per iteration.
+
+After all iterations, both the loop and the body get one aggregate step row
+with `output = [bodyOutput, ...]`. Nodes downstream of the body see the array
+via `ctx[bodyId]` and fire once.
+
+**v1 constraints:**
+
+- Single-node body only — multi-step bodies require subgraph delimiters and
+  are deferred. Workarounds: chain a follow-up `set` or `merge` after the
+  loop.
+- No nested loops — the body cannot itself be a loop.
+- Sequential — iterations don't run in parallel. (Predictable; simple to
+  reason about.)
+- Loops sharing an `itemVar` cannot run in parallel branches without
+  collision; pick distinct names if a graph has more than one loop at the
+  same level.
 
 ### `merge`
 

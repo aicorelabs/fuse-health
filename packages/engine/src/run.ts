@@ -28,10 +28,11 @@ export async function startRun(
       workflowId: workflow.id,
       status: "PENDING",
       input: input as never,
+      graphSnapshot: workflow.graph as never,
     },
   });
 
-  void runInBackground(run.id, workflow.id, workflow.maxConcurrent, workflow.graph);
+  void runInBackground(run.id, workflow.id, workflow.maxConcurrent);
 
   return { runId: run.id, status: "PENDING" };
 }
@@ -40,16 +41,19 @@ async function runInBackground(
   runId: string,
   workflowId: string,
   maxConcurrent: number,
-  graphJson: unknown,
 ): Promise<void> {
   await acquireSlot(workflowId, maxConcurrent);
   try {
     const run = await prisma.workflowRun.update({
       where: { id: runId },
       data: { status: "RUNNING", startedAt: new Date() },
+      include: { workflow: { select: { graph: true } } },
     });
 
     try {
+      // Prefer the run's graphSnapshot (taken at start) over the live workflow.graph,
+      // so in-flight runs are unaffected by edits to the workflow.
+      const graphJson = run.graphSnapshot ?? run.workflow.graph;
       const graph = WorkflowGraph.fromJSON(graphJson);
       const { output } = await executeRun({ run, graph });
 
