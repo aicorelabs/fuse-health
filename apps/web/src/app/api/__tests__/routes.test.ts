@@ -19,7 +19,19 @@ import { GET as getRunById } from "../runs/[id]/route.js";
 import { POST as postRun } from "../runs/route.js";
 import { GET as getLastRunOutput } from "../workflows/[id]/last-run-output/route.js";
 import { POST as previewRun } from "../workflows/[id]/preview/route.js";
-import { GET as listIntegrationsRoute } from "../integrations/route.js";
+import {
+  GET as listIntegrationsRoute,
+  POST as createIntegrationRoute,
+} from "../integrations/route.js";
+import {
+  DELETE as deleteIntegrationRoute,
+  PATCH as patchIntegrationRoute,
+} from "../integrations/[name]/route.js";
+import { POST as createCustomFunctionRoute } from "../integrations/[name]/functions/route.js";
+import {
+  DELETE as deleteCustomFunctionRoute,
+  PATCH as patchCustomFunctionRoute,
+} from "../integrations/[name]/functions/[fnName]/route.js";
 
 const TEST_WORKFLOW_ID = `wf_test_routes_${randomUUID()}`;
 let testRunId = "";
@@ -559,5 +571,186 @@ describe("GET /api/integrations", () => {
     const getResults = labs?.functions.find((f) => f.name === "getResults");
     expect(getResults?.sampleInput).toEqual({ patientId: "p_001" });
     expect(getResults?.sampleOutput).toBeDefined();
+  });
+});
+
+function jsonReq(url: string, method: string, body: unknown) {
+  return new Request(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("custom integrations CRUD", () => {
+  const slug = `ci_${randomUUID().slice(0, 8)}`;
+
+  afterAll(async () => {
+    await prisma.customIntegration.deleteMany({ where: { name: slug } });
+  });
+
+  it("POST /api/integrations creates a custom integration", async () => {
+    const res = await createIntegrationRoute(
+      jsonReq("http://localhost/api/integrations", "POST", {
+        name: slug,
+        label: "Custom Test",
+        description: "A test integration",
+        category: "custom",
+        baseUrl: "https://api.example.com",
+        defaultHeaders: { Authorization: "Bearer {{ env.X }}" },
+      }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { name: string; baseUrl: string };
+    expect(body.name).toBe(slug);
+    expect(body.baseUrl).toBe("https://api.example.com");
+  });
+
+  it("POST /api/integrations rejects invalid slug", async () => {
+    const res = await createIntegrationRoute(
+      jsonReq("http://localhost/api/integrations", "POST", {
+        name: "Bad Name With Spaces",
+        label: "x",
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /api/integrations rejects duplicates", async () => {
+    const res = await createIntegrationRoute(
+      jsonReq("http://localhost/api/integrations", "POST", {
+        name: slug,
+        label: "dup",
+      }),
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it("POST /api/integrations rejects names that collide with built-ins", async () => {
+    const res = await createIntegrationRoute(
+      jsonReq("http://localhost/api/integrations", "POST", {
+        name: "labs",
+        label: "Override",
+      }),
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it("GET /api/integrations merges built-in and custom with builtin flag", async () => {
+    const res = await listIntegrationsRoute();
+    const body = (await res.json()) as {
+      integrations: Array<{ name: string; builtin: boolean }>;
+    };
+    const labs = body.integrations.find((i) => i.name === "labs");
+    const mine = body.integrations.find((i) => i.name === slug);
+    expect(labs?.builtin).toBe(true);
+    expect(mine?.builtin).toBe(false);
+  });
+
+  it("PATCH /api/integrations/[name] updates fields", async () => {
+    const res = await patchIntegrationRoute(
+      jsonReq(`http://localhost/api/integrations/${slug}`, "PATCH", {
+        label: "Renamed",
+      }),
+      { params: Promise.resolve({ name: slug }) },
+    );
+    expect(res.status).toBe(200);
+    const row = await prisma.customIntegration.findUnique({
+      where: { name: slug },
+    });
+    expect(row?.label).toBe("Renamed");
+  });
+
+  it("PATCH /api/integrations/[name] returns 404 for unknown", async () => {
+    const res = await patchIntegrationRoute(
+      jsonReq(
+        "http://localhost/api/integrations/does_not_exist_xy",
+        "PATCH",
+        { label: "x" },
+      ),
+      { params: Promise.resolve({ name: "does_not_exist_xy" }) },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /api/integrations/[name]/functions creates a function", async () => {
+    const res = await createCustomFunctionRoute(
+      jsonReq(
+        `http://localhost/api/integrations/${slug}/functions`,
+        "POST",
+        {
+          name: "fetchOne",
+          description: "Fetch one record",
+          method: "GET",
+          pathTemplate: "/v1/x/{{ id }}",
+          headers: {},
+          query: { include: "details" },
+          sampleInput: { id: "abc" },
+        },
+      ),
+      { params: Promise.resolve({ name: slug }) },
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { name: string };
+    expect(body.name).toBe("fetchOne");
+  });
+
+  it("POST function rejects duplicate names within the same integration", async () => {
+    const res = await createCustomFunctionRoute(
+      jsonReq(
+        `http://localhost/api/integrations/${slug}/functions`,
+        "POST",
+        { name: "fetchOne", pathTemplate: "/x" },
+      ),
+      { params: Promise.resolve({ name: slug }) },
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it("PATCH function updates fields", async () => {
+    const res = await patchCustomFunctionRoute(
+      jsonReq(
+        `http://localhost/api/integrations/${slug}/functions/fetchOne`,
+        "PATCH",
+        { description: "edited" },
+      ),
+      { params: Promise.resolve({ name: slug, fnName: "fetchOne" }) },
+    );
+    expect(res.status).toBe(200);
+    const row = await prisma.customFunction.findFirst({
+      where: { name: "fetchOne" },
+    });
+    expect(row?.description).toBe("edited");
+  });
+
+  it("DELETE function returns 204 and removes the row", async () => {
+    const res = await deleteCustomFunctionRoute(
+      new Request(
+        `http://localhost/api/integrations/${slug}/functions/fetchOne`,
+      ),
+      { params: Promise.resolve({ name: slug, fnName: "fetchOne" }) },
+    );
+    expect(res.status).toBe(204);
+  });
+
+  it("DELETE integration cascades and returns 204", async () => {
+    // Recreate a function to confirm cascade delete works.
+    await createCustomFunctionRoute(
+      jsonReq(
+        `http://localhost/api/integrations/${slug}/functions`,
+        "POST",
+        { name: "again", pathTemplate: "/x" },
+      ),
+      { params: Promise.resolve({ name: slug }) },
+    );
+    const res = await deleteIntegrationRoute(
+      new Request(`http://localhost/api/integrations/${slug}`),
+      { params: Promise.resolve({ name: slug }) },
+    );
+    expect(res.status).toBe(204);
+    const row = await prisma.customIntegration.findUnique({
+      where: { name: slug },
+    });
+    expect(row).toBeNull();
   });
 });

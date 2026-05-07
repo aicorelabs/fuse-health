@@ -67,3 +67,40 @@ enum RunStatus {
   CANCELLED
   SKIPPED
 }
+
+// User-defined integrations. Resolved by the engine when an action node's
+// integration name doesn't match a built-in. Headers, query, and body are
+// templated against the action's input + env vars at call time.
+model CustomIntegration {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  label          String
+  description    String   @default("")
+  category       String   @default("custom")
+  baseUrl        String?
+  defaultHeaders Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  functions CustomFunction[]
+}
+
+model CustomFunction {
+  id            String            @id @default(cuid())
+  integrationId String
+  integration   CustomIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  name          String
+  description   String            @default("")
+  method        String            @default("GET")
+  pathTemplate  String
+  headers       Json              @default("{}")
+  query         Json              @default("{}")
+  bodyTemplate  Json?
+  timeoutMs     Int               @default(50000)
+  sampleInput   Json?
+  sampleOutput  Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([integrationId, name])
+}

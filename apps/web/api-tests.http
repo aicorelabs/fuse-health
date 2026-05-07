@@ -186,10 +186,73 @@ DELETE {{host}}/api/workflows/wf_does_not_exist
 
 ###
 # Integrations registry — used by /integrations catalog and the editor's
-# action node picker. Returns built-in integrations with their functions
-# and sampleInput/sampleOutput.
+# action node picker. Returns built-in + custom integrations with their
+# functions and sampleInput/sampleOutput. Each carries `builtin: true|false`.
 # curl http://localhost:3000/api/integrations
 GET {{host}}/api/integrations
+
+###
+# ─── Custom integrations CRUD (M2-P2) ────────────────────────────────────────
+@customSlug = my-test-api
+
+# Create a custom integration
+# @name createCustom
+POST {{host}}/api/integrations
+Content-Type: application/json
+
+{
+  "name": "{{customSlug}}",
+  "label": "My Test API",
+  "description": "User-defined HTTP integration",
+  "category": "custom",
+  "baseUrl": "https://api.example.com",
+  "defaultHeaders": {
+    "Authorization": "Bearer {{ env.MY_API_KEY }}"
+  }
+}
+
+###
+# Update fields
+PATCH {{host}}/api/integrations/{{customSlug}}
+Content-Type: application/json
+
+{ "label": "My Test API (renamed)" }
+
+###
+# 409 — reserved by built-in
+POST {{host}}/api/integrations
+Content-Type: application/json
+
+{ "name": "labs", "label": "Override" }
+
+###
+# Add a function
+POST {{host}}/api/integrations/{{customSlug}}/functions
+Content-Type: application/json
+
+{
+  "name": "fetchOne",
+  "description": "Fetch one record by id",
+  "method": "GET",
+  "pathTemplate": "/v1/things/{{ id }}",
+  "query": { "include": "details" },
+  "sampleInput": { "id": "abc_123" }
+}
+
+###
+# Update a function
+PATCH {{host}}/api/integrations/{{customSlug}}/functions/fetchOne
+Content-Type: application/json
+
+{ "method": "POST", "bodyTemplate": { "id": "{{ id }}" } }
+
+###
+# Delete a function
+DELETE {{host}}/api/integrations/{{customSlug}}/functions/fetchOne
+
+###
+# Delete the integration (cascades to remaining functions)
+DELETE {{host}}/api/integrations/{{customSlug}}
 
 ###
 # Last successful run's input + output — feeds the editor inspector's

@@ -9,6 +9,7 @@ import {
 } from "@fuse/core";
 import { prisma, type WorkflowRun } from "@fuse/db";
 
+import { runCustomAction } from "./custom-action.js";
 import {
   IntegrationNotFoundError,
   NotImplementedNodeError,
@@ -202,16 +203,57 @@ async function computeNodeOutput(
       break;
     }
     case "action": {
-      const fn = resolveFunction(node.integration, node.functionName);
-      if (!fn) {
-        throw new IntegrationNotFoundError(node.integration, node.functionName);
-      }
       renderedInput = renderValue(node.config.input, ctx);
-      output = await withTimeout(
-        fn.invoke(renderedInput),
-        fn.timeoutMs,
-        `${node.integration}.${node.functionName}`,
+
+      // Built-in registry first.
+      const fn = resolveFunction(node.integration, node.functionName);
+      if (fn) {
+        output = await withTimeout(
+          fn.invoke(renderedInput),
+          fn.timeoutMs,
+          `${node.integration}.${node.functionName}`,
+        );
+        break;
+      }
+
+      // Fall back to user-defined integrations stored in the DB.
+      const custom = await prisma.customIntegration.findUnique({
+        where: { name: node.integration },
+        include: {
+          functions: { where: { name: node.functionName } },
+        },
+      });
+      const customFn = custom?.functions[0];
+      if (!custom || !customFn) {
+        throw new IntegrationNotFoundError(
+          node.integration,
+          node.functionName,
+        );
+      }
+      const result = await withTimeout(
+        runCustomAction(
+          {
+            name: custom.name,
+            baseUrl: custom.baseUrl,
+            defaultHeaders: ((custom.defaultHeaders ?? {}) as Record<
+              string,
+              string
+            >),
+          },
+          {
+            method: customFn.method,
+            pathTemplate: customFn.pathTemplate,
+            headers: ((customFn.headers ?? {}) as Record<string, string>),
+            query: ((customFn.query ?? {}) as Record<string, string>),
+            bodyTemplate: customFn.bodyTemplate,
+            timeoutMs: customFn.timeoutMs,
+          },
+          renderedInput as Record<string, unknown>,
+        ),
+        customFn.timeoutMs,
+        `${custom.name}.${customFn.name}`,
       );
+      output = result.output;
       break;
     }
     case "http": {
