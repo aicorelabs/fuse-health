@@ -31,12 +31,20 @@ export default async function HomePage() {
             Postgres, MCP-ready.
           </p>
         </div>
-        <Link
-          href="/workflows/new"
-          className="shrink-0 rounded-sm bg-stone-900 px-3.5 py-1.5 text-[12.5px] font-medium text-stone-50 transition-colors hover:bg-stone-700 dark:bg-stone-50 dark:text-stone-900 dark:hover:bg-stone-200"
-        >
-          New workflow
-        </Link>
+        <div className="flex shrink-0 items-center gap-2">
+          <Link
+            href="/integrations"
+            className="rounded-sm border border-stone-200 px-3 py-1.5 text-[12.5px] font-medium text-stone-700 transition-colors hover:border-stone-900 hover:text-stone-900 dark:border-stone-800 dark:text-stone-300 dark:hover:border-stone-100 dark:hover:text-stone-100"
+          >
+            Integrations
+          </Link>
+          <Link
+            href="/workflows/new"
+            className="rounded-sm bg-stone-900 px-3.5 py-1.5 text-[12.5px] font-medium text-stone-50 transition-colors hover:bg-stone-700 dark:bg-stone-50 dark:text-stone-900 dark:hover:bg-stone-200"
+          >
+            New workflow
+          </Link>
+        </div>
       </header>
 
       <section className="space-y-3">

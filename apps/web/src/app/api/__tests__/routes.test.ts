@@ -19,6 +19,7 @@ import { GET as getRunById } from "../runs/[id]/route.js";
 import { POST as postRun } from "../runs/route.js";
 import { GET as getLastRunOutput } from "../workflows/[id]/last-run-output/route.js";
 import { POST as previewRun } from "../workflows/[id]/preview/route.js";
+import { GET as listIntegrationsRoute } from "../integrations/route.js";
 
 const TEST_WORKFLOW_ID = `wf_test_routes_${randomUUID()}`;
 let testRunId = "";
@@ -510,5 +511,53 @@ describe("POST /api/workflows/[id]/preview", () => {
       { params: Promise.resolve({ id: previewWorkflowId }) },
     );
     expect(res.status).toBe(422);
+  });
+});
+
+describe("GET /api/integrations", () => {
+  it("returns the registry with all built-in integrations", async () => {
+    const res = await listIntegrationsRoute();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      integrations: Array<{
+        name: string;
+        label: string;
+        description: string;
+        category: string;
+        functions: Array<{ name: string; description: string }>;
+      }>;
+    };
+    expect(Array.isArray(body.integrations)).toBe(true);
+    const names = body.integrations.map((i) => i.name).sort();
+    // 6 built-ins after M2-P1: labs, radiology, ehr-notes, epic, twilio, slack
+    expect(names).toContain("labs");
+    expect(names).toContain("epic");
+    expect(names).toContain("twilio");
+    expect(names).toContain("slack");
+
+    const epic = body.integrations.find((i) => i.name === "epic");
+    expect(epic?.label).toBe("Epic (FHIR)");
+    expect(epic?.functions.map((f) => f.name).sort()).toEqual([
+      "getPatient",
+      "searchObservations",
+    ]);
+  });
+
+  it("includes sampleInput and sampleOutput on functions that declare them", async () => {
+    const res = await listIntegrationsRoute();
+    const body = (await res.json()) as {
+      integrations: Array<{
+        name: string;
+        functions: Array<{
+          name: string;
+          sampleInput?: unknown;
+          sampleOutput?: unknown;
+        }>;
+      }>;
+    };
+    const labs = body.integrations.find((i) => i.name === "labs");
+    const getResults = labs?.functions.find((f) => f.name === "getResults");
+    expect(getResults?.sampleInput).toEqual({ patientId: "p_001" });
+    expect(getResults?.sampleOutput).toBeDefined();
   });
 });
