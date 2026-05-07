@@ -1,6 +1,8 @@
 "use client";
 
-import { useIntegrations } from "@/lib/integrations";
+import { useState } from "react";
+
+import { findFunction, useIntegrations } from "@/lib/integrations";
 
 import { FormField, inputClass } from "./_FormField";
 import { JsonField } from "./_JsonField";
@@ -27,16 +29,148 @@ export function ActionForm({
   onChange: (c: Config) => void;
 }) {
   const { data: listing, error, loading } = useIntegrations();
+  const [showPicker, setShowPicker] = useState(false);
 
-  const selectedIntegration = listing?.find(
-    (i) => i.name === config.integration,
+  if (error) {
+    return (
+      <div className="space-y-3">
+        <div className="border-l-2 border-rose-500/70 bg-rose-50/40 px-3 py-2 text-[12px] text-rose-800 dark:bg-rose-950/20 dark:text-rose-200">
+          Couldn&apos;t load integrations · {error}
+        </div>
+        <FallbackTextFields config={config} onChange={onChange} />
+      </div>
+    );
+  }
+
+  if (loading || !listing) {
+    return (
+      <div className="space-y-3">
+        <div className="text-[12px] text-stone-500">Loading integrations…</div>
+      </div>
+    );
+  }
+
+  const found = findFunction(listing, config.integration, config.function);
+  const showAsPicker = !found || showPicker;
+
+  return (
+    <div className="space-y-3">
+      {showAsPicker ? (
+        <Picker
+          listing={listing}
+          config={config}
+          onChange={onChange}
+          onDone={() => {
+            const ok = findFunction(
+              listing,
+              config.integration,
+              config.function,
+            );
+            if (ok) setShowPicker(false);
+          }}
+        />
+      ) : (
+        <ReadOnlyChoice
+          integrationLabel={found.integration.label}
+          integrationCategory={found.integration.category}
+          integrationName={found.integration.name}
+          functionName={found.fn.name}
+          functionDescription={found.fn.description}
+          onChange={() => setShowPicker(true)}
+        />
+      )}
+
+      <FormField
+        label="Input (JSON)"
+        hint="Templates resolve at run time. Sample auto-fills when an integration is picked."
+      >
+        <JsonField
+          value={config.input ?? {}}
+          onChange={(v) =>
+            onChange({
+              ...config,
+              input: (v ?? {}) as Record<string, unknown>,
+            })
+          }
+        />
+      </FormField>
+    </div>
   );
+}
+
+function ReadOnlyChoice({
+  integrationLabel,
+  integrationCategory,
+  integrationName,
+  functionName,
+  functionDescription,
+  onChange,
+}: {
+  integrationLabel: string;
+  integrationCategory: string;
+  integrationName: string;
+  functionName: string;
+  functionDescription: string;
+  onChange: () => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-stone-500 dark:text-stone-400">
+          Calls
+        </span>
+        <button
+          type="button"
+          onClick={onChange}
+          className="font-mono text-[10px] uppercase tracking-[0.14em] text-stone-400 transition-colors hover:text-stone-700 dark:hover:text-stone-200"
+        >
+          change
+        </button>
+      </div>
+
+      <div className="space-y-1.5 rounded-sm border border-stone-200 bg-stone-50/40 px-2.5 py-2 dark:border-stone-800 dark:bg-stone-900/40">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="truncate text-[13px] font-medium tracking-tight text-stone-900 dark:text-stone-100">
+            {integrationLabel}
+          </span>
+          <span className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-stone-400 dark:text-stone-500">
+            {integrationCategory}
+          </span>
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span className="font-mono text-[11px] tabular text-stone-400 dark:text-stone-500">
+            {integrationName}
+          </span>
+          <span className="font-mono text-[10.5px] text-stone-300 dark:text-stone-700">
+            ·
+          </span>
+          <span className="font-mono text-[12px] text-stone-700 dark:text-stone-300">
+            {functionName}
+          </span>
+        </div>
+        <p className="text-[11.5px] leading-relaxed text-stone-500 dark:text-stone-500">
+          {functionDescription}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+interface PickerProps {
+  listing: NonNullable<ReturnType<typeof useIntegrations>["data"]>;
+  config: Config;
+  onChange: (c: Config) => void;
+  onDone: () => void;
+}
+
+function Picker({ listing, config, onChange, onDone }: PickerProps) {
+  const selectedIntegration = listing.find((i) => i.name === config.integration);
   const selectedFunction = selectedIntegration?.functions.find(
     (f) => f.name === config.function,
   );
 
   function pickIntegration(name: string) {
-    const integ = listing?.find((i) => i.name === name);
+    const integ = listing.find((i) => i.name === name);
     const firstFn = integ?.functions[0];
     onChange({
       ...config,
@@ -61,28 +195,23 @@ export function ActionForm({
     });
   }
 
-  if (error) {
-    return (
-      <div className="space-y-3">
-        <div className="border-l-2 border-rose-500/70 bg-rose-50/40 px-3 py-2 text-[12px] text-rose-800 dark:bg-rose-950/20 dark:text-rose-200">
-          Couldn&apos;t load integrations · {error}
-        </div>
-        <FallbackTextFields config={config} onChange={onChange} />
-      </div>
-    );
-  }
-
-  if (loading || !listing) {
-    return (
-      <div className="space-y-3">
-        <div className="text-[12px] text-stone-500">Loading integrations…</div>
-        <FallbackTextFields config={config} onChange={onChange} />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-3">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-stone-500 dark:text-stone-400">
+          Pick a call
+        </span>
+        {selectedFunction && (
+          <button
+            type="button"
+            onClick={onDone}
+            className="font-mono text-[10px] uppercase tracking-[0.14em] text-stone-400 transition-colors hover:text-stone-700 dark:hover:text-stone-200"
+          >
+            done
+          </button>
+        )}
+      </div>
+
       <FormField label="Integration">
         <select
           className={`${inputClass} appearance-none`}
@@ -126,21 +255,6 @@ export function ActionForm({
             </option>
           ))}
         </select>
-      </FormField>
-
-      <FormField
-        label="Input (JSON)"
-        hint="Templates resolve at run time. Sample auto-fills when an integration is picked."
-      >
-        <JsonField
-          value={config.input ?? {}}
-          onChange={(v) =>
-            onChange({
-              ...config,
-              input: (v ?? {}) as Record<string, unknown>,
-            })
-          }
-        />
       </FormField>
     </div>
   );

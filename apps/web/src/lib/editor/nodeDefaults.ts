@@ -12,7 +12,7 @@ const DEFAULT_CONFIG: Record<NodeKind, () => Record<string, unknown>> = {
   "trigger.manual": () => ({}),
   "trigger.webhook": () => ({ path: "/webhook", method: "POST" }),
   "trigger.schedule": () => ({ cron: "0 0 * * *" }),
-  action: () => ({ integration: "labs", function: "getResults", input: {} }),
+  action: () => ({ integration: "", function: "", input: {} }),
   http: () => ({ method: "GET", url: "https://example.com" }),
   llm: () => ({ prompt: "" }),
   branch: () => ({ cases: [] }),
