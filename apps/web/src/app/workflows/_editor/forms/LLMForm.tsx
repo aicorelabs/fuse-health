@@ -1,6 +1,7 @@
 "use client";
 
 import { FormField, inputClass } from "./_FormField";
+import { TemplateInput } from "./_TemplateInput";
 
 interface Config {
   prompt: string;
@@ -17,13 +18,14 @@ export function LLMForm({
   return (
     <div className="space-y-3">
       <FormField label="Prompt" hint="Templates resolve at run time.">
-        <textarea
-          className={`${inputClass} font-mono text-xs`}
+        <TemplateInput
+          value={config.prompt ?? ""}
+          onChange={(prompt) => onChange({ ...config, prompt })}
+          multiline
           rows={8}
           spellCheck={false}
-          value={config.prompt ?? ""}
-          onChange={(e) => onChange({ ...config, prompt: e.target.value })}
           placeholder="Summarize the patient chart for the attending..."
+          className={`${inputClass} font-mono text-xs`}
         />
       </FormField>
       <FormField label="Model" hint="Defaults to llama-3.3-70b-versatile.">

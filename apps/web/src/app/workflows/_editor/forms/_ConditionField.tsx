@@ -3,6 +3,7 @@
 import type { Condition, ConditionOp } from "@fuse/core";
 
 import { inputClass } from "./_FormField";
+import { TemplateInput } from "./_TemplateInput";
 
 const OPS: ConditionOp[] = [
   "==",
@@ -34,12 +35,11 @@ export function ConditionField({ value, onChange }: Props) {
     <div className="grid grid-cols-[minmax(0,1fr)_92px_minmax(0,1fr)] gap-2">
       <div>
         <span className={labelClass}>Left</span>
-        <input
-          type="text"
-          className={`${inputClass} font-mono text-[12px]`}
+        <TemplateInput
           value={String(value.left ?? "")}
-          onChange={(e) => onChange({ ...value, left: e.target.value })}
+          onChange={(v) => onChange({ ...value, left: v })}
           placeholder="{{ trigger.input.x }}"
+          className={`${inputClass} font-mono text-[12px]`}
         />
       </div>
 
@@ -66,12 +66,11 @@ export function ConditionField({ value, onChange }: Props) {
       <div>
         <span className={labelClass}>Right</span>
         {NEEDS_RIGHT(value.op) ? (
-          <input
-            type="text"
-            className={`${inputClass} font-mono text-[12px]`}
+          <TemplateInput
             value={String(value.right ?? "")}
-            onChange={(e) => onChange({ ...value, right: e.target.value })}
+            onChange={(v) => onChange({ ...value, right: v })}
             placeholder="value or {{ ref }}"
+            className={`${inputClass} font-mono text-[12px]`}
           />
         ) : (
           <div

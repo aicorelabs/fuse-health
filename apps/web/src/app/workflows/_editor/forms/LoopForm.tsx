@@ -1,6 +1,7 @@
 "use client";
 
 import { FormField, inputClass } from "./_FormField";
+import { TemplateInput } from "./_TemplateInput";
 
 interface Config {
   over: string;
@@ -17,12 +18,11 @@ export function LoopForm({
   return (
     <div className="space-y-3">
       <FormField label="Over" hint="Template ref that resolves to an array.">
-        <input
-          type="text"
-          className={inputClass}
+        <TemplateInput
           value={config.over ?? ""}
-          onChange={(e) => onChange({ ...config, over: e.target.value })}
+          onChange={(over) => onChange({ ...config, over })}
           placeholder="{{ trigger.input.patients }}"
+          className={`${inputClass} font-mono text-[12px]`}
         />
       </FormField>
       <FormField

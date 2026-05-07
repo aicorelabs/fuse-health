@@ -3,6 +3,7 @@
 import { FormField, inputClass } from "./_FormField";
 import { JsonField } from "./_JsonField";
 import { KeyValueField } from "./_KeyValueField";
+import { TemplateInput } from "./_TemplateInput";
 
 interface Config {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -38,12 +39,11 @@ export function HttpForm({
         </select>
       </FormField>
       <FormField label="URL">
-        <input
-          type="text"
-          className={inputClass}
+        <TemplateInput
           value={config.url ?? ""}
-          onChange={(e) => onChange({ ...config, url: e.target.value })}
+          onChange={(url) => onChange({ ...config, url })}
           placeholder="https://api.example.com/v1/x"
+          className={`${inputClass} font-mono text-[12px]`}
         />
       </FormField>
       <FormField label="Headers">

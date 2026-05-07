@@ -1,8 +1,14 @@
 "use client";
 
-import type { NodeKind } from "@fuse/core";
+import { useMemo } from "react";
+
+import type { GraphJSON, NodeKind } from "@fuse/core";
 
 import type { GraphLike, WorkflowFlowNode } from "@/lib/editor/graphConvert";
+import {
+  buildSampleContext,
+  scopeForNode,
+} from "@/lib/editor/templateScope";
 
 import { KIND_LABELS } from "./constants";
 import { ActionForm } from "./forms/ActionForm";
@@ -21,8 +27,7 @@ import { WaitForm } from "./forms/WaitForm";
 import { FormField, inputClass } from "./forms/_FormField";
 import { PreviewSection } from "./PreviewSection";
 import { ScopePanel, type LastRunSample } from "./ScopePanel";
-
-import type { GraphJSON } from "@fuse/core";
+import { TemplateScopeProvider } from "./TemplateScopeContext";
 
 export interface NodeConfigPanelProps {
   selectedNode: WorkflowFlowNode | null;
@@ -77,6 +82,20 @@ export function NodeConfigPanel({
     onPatch(id, { config: next });
   }
 
+  // Scope and sample context: computed once here, shared with ScopePanel
+  // (for display) and TemplateScopeProvider (for autocomplete).
+  const scope = useMemo(() => scopeForNode(graph, id), [graph, id]);
+  const samples = useMemo(
+    () =>
+      sample
+        ? buildSampleContext({
+            triggerInput: sample.triggerInput,
+            nodeOutputs: sample.nodeOutputs,
+          })
+        : null,
+    [sample],
+  );
+
   return (
     <aside className="hidden w-80 shrink-0 flex-col overflow-y-auto border-l border-stone-200 bg-white lg:flex dark:border-stone-800 dark:bg-stone-900">
       <header className="border-b border-stone-100 px-5 py-3 dark:border-stone-800/60">
@@ -88,36 +107,38 @@ export function NodeConfigPanel({
         </div>
       </header>
 
-      <div className="space-y-6 px-5 py-4">
-        <FormField label="Name">
-          <input
-            type="text"
-            className={inputClass}
-            value={data.name}
-            onChange={(e) => onPatch(id, { name: e.target.value })}
+      <TemplateScopeProvider value={{ scope, samples }}>
+        <div className="space-y-6 px-5 py-4">
+          <FormField label="Name">
+            <input
+              type="text"
+              className={inputClass}
+              value={data.name}
+              onChange={(e) => onPatch(id, { name: e.target.value })}
+            />
+          </FormField>
+
+          {renderForm(kind, id, config, setConfig, onCaseRename, onCaseRemove)}
+        </div>
+
+        <div className="space-y-6 border-t border-stone-100 px-5 py-4 dark:border-stone-800/60">
+          <ScopePanel
+            graph={graph}
+            nodeId={id}
+            config={config}
+            sample={sample}
+            sampleStatus={sampleStatus}
           />
-        </FormField>
-
-        {renderForm(kind, id, config, setConfig, onCaseRename, onCaseRemove)}
-      </div>
-
-      <div className="space-y-6 border-t border-stone-100 px-5 py-4 dark:border-stone-800/60">
-        <ScopePanel
-          graph={graph}
-          nodeId={id}
-          config={config}
-          sample={sample}
-          sampleStatus={sampleStatus}
-        />
-        <PreviewSection
-          workflowId={workflowId}
-          graph={liveGraphJson}
-          targetNodeId={id}
-          inputText={previewInputText}
-          onInputTextChange={onPreviewInputTextChange}
-          onSampleUpdate={onSampleUpdate}
-        />
-      </div>
+          <PreviewSection
+            workflowId={workflowId}
+            graph={liveGraphJson}
+            targetNodeId={id}
+            inputText={previewInputText}
+            onInputTextChange={onPreviewInputTextChange}
+            onSampleUpdate={onSampleUpdate}
+          />
+        </div>
+      </TemplateScopeProvider>
 
       <div className="mt-auto border-t border-stone-100 px-5 py-3 dark:border-stone-800/60">
         <button
