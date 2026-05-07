@@ -156,17 +156,59 @@ function EditorInner({ mode, workflow }: WorkflowEditorProps) {
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
+
+      const position = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+
+      // Drop from the Integrations palette section — fully-configured action node.
+      const integrationRaw = event.dataTransfer.getData(
+        "application/fuse-integration",
+      );
+      if (integrationRaw) {
+        let payload: {
+          integration: string;
+          function: string;
+          label: string;
+          sampleInput?: unknown;
+        };
+        try {
+          payload = JSON.parse(integrationRaw);
+        } catch {
+          return;
+        }
+        const id = nextNodeId(
+          nodes.map((n) => n.id),
+          "action",
+        );
+        const newRfNode: Node<WorkflowNodeData, "workflow"> = {
+          id,
+          type: "workflow",
+          position,
+          data: {
+            kind: "action",
+            name: payload.label,
+            config: {
+              integration: payload.integration,
+              function: payload.function,
+              input:
+                (payload.sampleInput as Record<string, unknown> | undefined) ??
+                {},
+            },
+          },
+        };
+        setNodes((ns) => [...ns, newRfNode]);
+        setSelectedNodeId(id);
+        return;
+      }
+
       const kindRaw = event.dataTransfer.getData("application/fuse-kind");
       if (!kindRaw) return;
       const kind = kindRaw as NodeKind;
 
       // Block dropping a second trigger.
       if (isTriggerKind(kind) && hasTrigger) return;
-
-      const position = screenToFlowPosition({
-        x: event.clientX,
-        y: event.clientY,
-      });
 
       const id = nextNodeId(
         nodes.map((n) => n.id),

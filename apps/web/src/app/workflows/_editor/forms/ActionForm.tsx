@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useIntegrations } from "@/lib/integrations";
 
 import { FormField, inputClass } from "./_FormField";
 import { JsonField } from "./_JsonField";
@@ -9,36 +9,6 @@ interface Config {
   integration: string;
   function: string;
   input?: Record<string, unknown>;
-}
-
-interface IntegrationFn {
-  name: string;
-  description: string;
-  sampleInput?: unknown;
-  sampleOutput?: unknown;
-}
-interface IntegrationListing {
-  name: string;
-  label: string;
-  description: string;
-  category: string;
-  functions: IntegrationFn[];
-}
-
-let cachedListing: IntegrationListing[] | null = null;
-let inflight: Promise<IntegrationListing[]> | null = null;
-
-async function loadIntegrations(): Promise<IntegrationListing[]> {
-  if (cachedListing) return cachedListing;
-  if (inflight) return inflight;
-  inflight = (async () => {
-    const res = await fetch("/api/integrations", { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = (await res.json()) as { integrations: IntegrationListing[] };
-    cachedListing = body.integrations;
-    return body.integrations;
-  })();
-  return inflight;
 }
 
 function isEmptyInput(v: unknown): boolean {
@@ -56,25 +26,7 @@ export function ActionForm({
   config: Config;
   onChange: (c: Config) => void;
 }) {
-  const [listing, setListing] = useState<IntegrationListing[] | null>(
-    cachedListing,
-  );
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (listing) return;
-    let cancelled = false;
-    loadIntegrations()
-      .then((l) => {
-        if (!cancelled) setListing(l);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [listing]);
+  const { data: listing, error, loading } = useIntegrations();
 
   const selectedIntegration = listing?.find(
     (i) => i.name === config.integration,
@@ -120,7 +72,7 @@ export function ActionForm({
     );
   }
 
-  if (!listing) {
+  if (loading || !listing) {
     return (
       <div className="space-y-3">
         <div className="text-[12px] text-stone-500">Loading integrations…</div>
@@ -153,10 +105,7 @@ export function ActionForm({
         </select>
       </FormField>
 
-      <FormField
-        label="Function"
-        hint={selectedFunction?.description}
-      >
+      <FormField label="Function" hint={selectedFunction?.description}>
         <select
           className={`${inputClass} appearance-none`}
           value={config.function ?? ""}
