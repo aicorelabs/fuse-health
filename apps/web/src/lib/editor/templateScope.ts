@@ -120,6 +120,26 @@ export function firstSegment(ref: string): string {
   return idx === -1 ? ref : ref.slice(0, idx);
 }
 
+/**
+ * Build the sample context used by `resolveRefAgainstSample`. Mirrors the
+ * engine executor's invariant: the reserved `trigger` key always carries
+ * `{ input: <runInput> }` and is never overwritten by `nodeOutputs.trigger`
+ * (which the engine writes when the trigger node's id is literally
+ * "trigger").
+ */
+export function buildSampleContext({
+  triggerInput,
+  nodeOutputs,
+}: {
+  triggerInput: unknown;
+  nodeOutputs: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    ...nodeOutputs,
+    trigger: { input: triggerInput },
+  };
+}
+
 export interface RefValidation {
   valid: boolean;
   firstSegment: string;

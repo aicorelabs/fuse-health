@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildSampleContext,
   extractTemplateRefs,
   extractTemplateRefsDeep,
   resolveRefAgainstSample,
@@ -226,6 +227,54 @@ describe("validateRefAgainstScope", () => {
     expect(validateRefAgainstScope("getLabs", scope).firstSegment).toBe(
       "getLabs",
     );
+  });
+});
+
+describe("buildSampleContext", () => {
+  it("wraps the trigger input under .input", () => {
+    const ctx = buildSampleContext({
+      triggerInput: { patientId: "p_001" },
+      nodeOutputs: {},
+    });
+    expect(ctx.trigger).toEqual({ input: { patientId: "p_001" } });
+  });
+
+  it("never lets a nodeOutputs.trigger entry clobber the reserved trigger key", () => {
+    // Engine writes nodeOutputs[trigger.id] = run.input — when trigger.id is
+    // literally "trigger", a naive spread would shadow `{ input: ... }`.
+    const ctx = buildSampleContext({
+      triggerInput: { patientId: "p_001" },
+      nodeOutputs: {
+        trigger: { patientId: "p_001" }, // engine's nodeOutputs.trigger
+        getLabs: { results: [] },
+      },
+    });
+    expect(ctx.trigger).toEqual({ input: { patientId: "p_001" } });
+    expect(ctx.getLabs).toEqual({ results: [] });
+  });
+
+  it("preserves other node outputs verbatim", () => {
+    const ctx = buildSampleContext({
+      triggerInput: {},
+      nodeOutputs: { a: 1, b: { c: 2 } },
+    });
+    expect(ctx.a).toBe(1);
+    expect(ctx.b).toEqual({ c: 2 });
+  });
+
+  it("produces a context where {{ trigger.input.<x> }} resolves via resolveRefAgainstSample", () => {
+    const ctx = buildSampleContext({
+      triggerInput: { patientId: "p_001" },
+      nodeOutputs: { trigger: { patientId: "p_001" } },
+    });
+    const scope = [{ name: "trigger", source: "trigger" as const }];
+    const result = resolveRefAgainstSample(
+      "trigger.input.patientId",
+      scope,
+      ctx,
+    );
+    expect(result.valid).toBe(true);
+    expect(result.resolved).toBe("p_001");
   });
 });
 

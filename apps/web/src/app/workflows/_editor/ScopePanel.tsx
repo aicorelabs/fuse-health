@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import type { GraphLike } from "@/lib/editor/graphConvert";
 import {
+  buildSampleContext,
   extractTemplateRefsDeep,
   resolveRefAgainstSample,
   scopeForNode,
@@ -47,10 +48,10 @@ export function ScopePanel({
   }, [config]);
 
   const samples: Record<string, unknown> | null = sample
-    ? {
-        trigger: { input: sample.triggerInput },
-        ...sample.nodeOutputs,
-      }
+    ? buildSampleContext({
+        triggerInput: sample.triggerInput,
+        nodeOutputs: sample.nodeOutputs,
+      })
     : null;
 
   return (
