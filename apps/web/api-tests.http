@@ -189,3 +189,34 @@ DELETE {{host}}/api/workflows/wf_does_not_exist
 # "Variables in scope" sample panels. 404 if no SUCCEEDED run yet.
 # curl http://localhost:3000/api/workflows/wf_demo_patient_summary/last-run-output
 GET {{host}}/api/workflows/{{workflowId}}/last-run-output
+
+###
+# Preview — run the prefix of an in-flight (possibly unsaved) graph up
+# to and including `targetNodeId`. The graph is supplied in the body.
+# Persists a WorkflowRun with isPartial=true. Used by the editor's
+# "Run up to here" button.
+POST {{host}}/api/workflows/{{workflowId}}/preview
+Content-Type: application/json
+
+{
+  "input": { "patientId": "p_001" },
+  "targetNodeId": "getLabs",
+  "graph": {
+    "nodes": [
+      { "id": "trigger", "kind": "trigger.manual", "name": "Manual trigger", "config": {} },
+      {
+        "id": "getLabs",
+        "kind": "action",
+        "name": "Get labs",
+        "config": {
+          "integration": "labs",
+          "function": "getResults",
+          "input": { "patientId": "{{ trigger.input.patientId }}" }
+        }
+      }
+    ],
+    "edges": [
+      { "id": "e1", "source": "trigger", "target": "getLabs" }
+    ]
+  }
+}

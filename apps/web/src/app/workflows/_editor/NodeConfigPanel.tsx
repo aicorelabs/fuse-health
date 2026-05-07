@@ -19,11 +19,19 @@ import { TriggerScheduleForm } from "./forms/TriggerScheduleForm";
 import { TriggerWebhookForm } from "./forms/TriggerWebhookForm";
 import { WaitForm } from "./forms/WaitForm";
 import { FormField, inputClass } from "./forms/_FormField";
+import { PreviewSection } from "./PreviewSection";
 import { ScopePanel, type LastRunSample } from "./ScopePanel";
+
+import type { GraphJSON } from "@fuse/core";
 
 export interface NodeConfigPanelProps {
   selectedNode: WorkflowFlowNode | null;
   graph: GraphLike;
+  liveGraphJson: GraphJSON;
+  workflowId: string | undefined;
+  previewInputText: string;
+  onPreviewInputTextChange: (text: string) => void;
+  onSampleUpdate: (sample: LastRunSample) => void;
   sample: LastRunSample | null;
   sampleStatus: "idle" | "loading" | "ready" | "missing";
   onPatch: (id: string, patch: { name?: string; config?: unknown }) => void;
@@ -35,6 +43,11 @@ export interface NodeConfigPanelProps {
 export function NodeConfigPanel({
   selectedNode,
   graph,
+  liveGraphJson,
+  workflowId,
+  previewInputText,
+  onPreviewInputTextChange,
+  onSampleUpdate,
   sample,
   sampleStatus,
   onPatch,
@@ -88,13 +101,21 @@ export function NodeConfigPanel({
         {renderForm(kind, id, config, setConfig, onCaseRename, onCaseRemove)}
       </div>
 
-      <div className="border-t border-stone-100 px-5 py-4 dark:border-stone-800/60">
+      <div className="space-y-6 border-t border-stone-100 px-5 py-4 dark:border-stone-800/60">
         <ScopePanel
           graph={graph}
           nodeId={id}
           config={config}
           sample={sample}
           sampleStatus={sampleStatus}
+        />
+        <PreviewSection
+          workflowId={workflowId}
+          graph={liveGraphJson}
+          targetNodeId={id}
+          inputText={previewInputText}
+          onInputTextChange={onPreviewInputTextChange}
+          onSampleUpdate={onSampleUpdate}
         />
       </div>
 

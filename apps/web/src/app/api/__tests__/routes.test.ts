@@ -18,6 +18,7 @@ import {
 import { GET as getRunById } from "../runs/[id]/route.js";
 import { POST as postRun } from "../runs/route.js";
 import { GET as getLastRunOutput } from "../workflows/[id]/last-run-output/route.js";
+import { POST as previewRun } from "../workflows/[id]/preview/route.js";
 
 const TEST_WORKFLOW_ID = `wf_test_routes_${randomUUID()}`;
 let testRunId = "";
@@ -399,5 +400,115 @@ describe("GET /api/workflows/[id]/last-run-output", () => {
       await prisma.workflowRun.deleteMany({ where: { workflowId: id } });
       await prisma.workflow.deleteMany({ where: { id } });
     }
+  });
+});
+
+function previewRequest(body: unknown) {
+  return new Request("http://localhost/api/workflows/x/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("POST /api/workflows/[id]/preview", () => {
+  const previewWorkflowId = `wf_test_preview_${randomUUID()}`;
+
+  beforeAll(async () => {
+    await prisma.workflow.create({
+      data: {
+        id: previewWorkflowId,
+        name: "TEST preview",
+        graph: MIN_GRAPH as never,
+        maxConcurrent: 5,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.workflowRun.deleteMany({ where: { workflowId: previewWorkflowId } });
+    await prisma.workflow.deleteMany({ where: { id: previewWorkflowId } });
+  });
+
+  const validGraph = {
+    nodes: [
+      { id: "trigger", kind: "trigger.manual", name: "trigger", config: {} },
+      {
+        id: "getLabs",
+        kind: "action",
+        name: "Get labs",
+        config: {
+          integration: "labs",
+          function: "getResults",
+          input: { patientId: "{{ trigger.input.patientId }}" },
+        },
+      },
+    ],
+    edges: [{ id: "e1", source: "trigger", target: "getLabs" }],
+  };
+
+  it("200 with run state on valid body", async () => {
+    const res = await previewRun(
+      previewRequest({
+        input: { patientId: "p_777" },
+        graph: validGraph,
+        targetNodeId: "getLabs",
+      }),
+      { params: Promise.resolve({ id: previewWorkflowId }) },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      runId: string;
+      status: string;
+      output: Record<string, unknown>;
+    };
+    expect(body.status).toBe("SUCCEEDED");
+    expect(body.runId).toBeTruthy();
+    const labs = body.output["getLabs"] as { patientId: string };
+    expect(labs.patientId).toBe("p_777");
+  });
+
+  it("400 on missing targetNodeId", async () => {
+    const res = await previewRun(
+      previewRequest({ input: {}, graph: validGraph }),
+      { params: Promise.resolve({ id: previewWorkflowId }) },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("400 on graph that fails fromJSON", async () => {
+    const res = await previewRun(
+      previewRequest({
+        input: {},
+        graph: { nodes: [{ id: "x", kind: "not_real", name: "x", config: {} }], edges: [] },
+        targetNodeId: "x",
+      }),
+      { params: Promise.resolve({ id: previewWorkflowId }) },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("404 on unknown workflowId", async () => {
+    const res = await previewRun(
+      previewRequest({
+        input: {},
+        graph: validGraph,
+        targetNodeId: "getLabs",
+      }),
+      { params: Promise.resolve({ id: "wf_does_not_exist_preview" }) },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("422 when targetNodeId is not in the graph", async () => {
+    const res = await previewRun(
+      previewRequest({
+        input: {},
+        graph: validGraph,
+        targetNodeId: "not_in_graph",
+      }),
+      { params: Promise.resolve({ id: previewWorkflowId }) },
+    );
+    expect(res.status).toBe(422);
   });
 });

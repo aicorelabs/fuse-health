@@ -17,7 +17,7 @@ export default async function WorkflowDetailPage({
   if (!workflow) notFound();
 
   const recentRuns = await prisma.workflowRun.findMany({
-    where: { workflowId: id },
+    where: { workflowId: id, isPartial: false },
     select: {
       id: true,
       status: true,

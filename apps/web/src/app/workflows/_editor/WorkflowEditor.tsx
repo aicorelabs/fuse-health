@@ -73,6 +73,9 @@ function EditorInner({ mode, workflow }: WorkflowEditorProps) {
   const [sampleStatus, setSampleStatus] = useState<
     "idle" | "loading" | "ready" | "missing"
   >("idle");
+  const [previewInputText, setPreviewInputText] = useState(
+    '{\n  "patientId": "p_001"\n}',
+  );
 
   const { screenToFlowPosition } = useReactFlow();
 
@@ -290,6 +293,14 @@ function EditorInner({ mode, workflow }: WorkflowEditorProps) {
         <NodeConfigPanel
           selectedNode={selectedNode as WorkflowFlowNode | null}
           graph={liveGraph}
+          liveGraphJson={liveGraph}
+          workflowId={mode === "update" ? workflow.id : undefined}
+          previewInputText={previewInputText}
+          onPreviewInputTextChange={setPreviewInputText}
+          onSampleUpdate={(s) => {
+            setSample(s);
+            setSampleStatus("ready");
+          }}
           sample={sample}
           sampleStatus={sampleStatus}
           onPatch={patchNode}

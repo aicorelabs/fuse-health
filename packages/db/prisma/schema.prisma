@@ -33,6 +33,7 @@ model WorkflowRun {
   output        Json?
   error         String?
   graphSnapshot Json?
+  isPartial     Boolean   @default(false)
   startedAt     DateTime?
   finishedAt    DateTime?
   createdAt     DateTime  @default(now())
@@ -40,6 +41,7 @@ model WorkflowRun {
   steps WorkflowStepRun[]
 
   @@index([workflowId, createdAt])
+  @@index([workflowId, isPartial, createdAt])
 }
 
 model WorkflowStepRun {
