@@ -4,17 +4,76 @@ import {
   listIntegrations,
   registerBuiltInIntegrations,
 } from "@fuse/connectors";
+import { prisma } from "@fuse/db";
 
 export const dynamic = "force-dynamic";
 
-export default function IntegrationsPage() {
-  registerBuiltInIntegrations();
-  const all = listIntegrations()
-    .map((i) => i.toJSON())
-    .sort((a, b) => a.label.localeCompare(b.label));
+interface IntegrationCard {
+  name: string;
+  label: string;
+  description: string;
+  category: string;
+  builtin: boolean;
+  functions: Array<{
+    name: string;
+    description: string;
+    timeoutMs: number;
+    sampleInput?: unknown;
+    sampleOutput?: unknown;
+  }>;
+}
 
-  // Group by category. Order categories by first-seen for stability.
-  const byCategory = new Map<string, typeof all>();
+export default async function IntegrationsPage() {
+  registerBuiltInIntegrations();
+
+  const builtin: IntegrationCard[] = listIntegrations()
+    .map((i) => i.toJSON())
+    .map((j) => ({
+      name: j.name,
+      label: j.label,
+      description: j.description,
+      category: j.category,
+      builtin: true,
+      functions: j.functions.map((f) => ({
+        name: f.name,
+        description: f.description,
+        timeoutMs: f.timeoutMs,
+        ...(f.sampleInput !== undefined && { sampleInput: f.sampleInput }),
+        ...(f.sampleOutput !== undefined && { sampleOutput: f.sampleOutput }),
+      })),
+    }));
+
+  const customRows = await prisma.customIntegration.findMany({
+    include: { functions: { orderBy: { name: "asc" } } },
+    orderBy: { label: "asc" },
+  });
+  const custom: IntegrationCard[] = customRows.map((row) => ({
+    name: row.name,
+    label: row.label,
+    description: row.description,
+    category: row.category,
+    builtin: false,
+    functions: row.functions.map((f) => ({
+      name: f.name,
+      description: f.description,
+      timeoutMs: f.timeoutMs,
+      ...(f.sampleInput !== null &&
+        f.sampleInput !== undefined && {
+          sampleInput: f.sampleInput,
+        }),
+      ...(f.sampleOutput !== null &&
+        f.sampleOutput !== undefined && {
+          sampleOutput: f.sampleOutput,
+        }),
+    })),
+  }));
+
+  const all = [...builtin, ...custom].sort((a, b) =>
+    a.label.toLowerCase().localeCompare(b.label.toLowerCase()),
+  );
+
+  // Group by category, preserving first-seen order across the merged list.
+  const byCategory = new Map<string, IntegrationCard[]>();
   for (const i of all) {
     const list = byCategory.get(i.category) ?? [];
     list.push(i);
@@ -38,21 +97,29 @@ export default function IntegrationsPage() {
             Integrations
           </h1>
           <p className="max-w-xl text-[14px] leading-relaxed text-stone-600 dark:text-stone-400">
-            Built-in connectors callable from any workflow&apos;s{" "}
+            Built-in connectors are mocked. Custom integrations are real HTTP
+            calls — define a base URL and one or more functions; auth lives in{" "}
             <code className="font-mono text-[13px] text-stone-700 dark:text-stone-300">
-              action
+              {"{{ env.NAME }}"}
             </code>{" "}
-            node. All v1 integrations are mocked — sample data shown is what an
-            authoring run sees today.
+            references.
           </p>
         </div>
-        <div className="shrink-0 text-right">
-          <div className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-stone-400 dark:text-stone-500">
-            Total
+        <div className="flex shrink-0 items-end gap-3">
+          <div className="text-right">
+            <div className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-stone-400 dark:text-stone-500">
+              Total
+            </div>
+            <div className="font-mono text-[20px] tabular text-stone-900 dark:text-stone-100">
+              {all.length}
+            </div>
           </div>
-          <div className="font-mono text-[20px] tabular text-stone-900 dark:text-stone-100">
-            {all.length}
-          </div>
+          <Link
+            href="/integrations/new"
+            className="rounded-sm bg-stone-900 px-3.5 py-1.5 text-[12.5px] font-medium text-stone-50 transition-colors hover:bg-stone-700 dark:bg-stone-50 dark:text-stone-900 dark:hover:bg-stone-200"
+          >
+            + New integration
+          </Link>
         </div>
       </header>
 
@@ -68,7 +135,7 @@ export default function IntegrationsPage() {
           </div>
           <ul className="space-y-6">
             {items.map((i) => (
-              <IntegrationCard key={i.name} integration={i} />
+              <IntegrationRow key={i.name} integration={i} />
             ))}
           </ul>
         </section>
@@ -77,21 +144,7 @@ export default function IntegrationsPage() {
   );
 }
 
-interface IntegrationJSON {
-  name: string;
-  label: string;
-  description: string;
-  category: string;
-  functions: Array<{
-    name: string;
-    description: string;
-    timeoutMs: number;
-    sampleInput?: unknown;
-    sampleOutput?: unknown;
-  }>;
-}
-
-function IntegrationCard({ integration }: { integration: IntegrationJSON }) {
+function IntegrationRow({ integration }: { integration: IntegrationCard }) {
   return (
     <li className="space-y-3 border-l-2 border-stone-200 pl-5 dark:border-stone-800">
       <div className="space-y-1">
@@ -102,20 +155,48 @@ function IntegrationCard({ integration }: { integration: IntegrationJSON }) {
           <code className="font-mono text-[11px] tabular text-stone-400 dark:text-stone-500">
             {integration.name}
           </code>
+          {integration.builtin ? (
+            <span className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-stone-400 dark:text-stone-500">
+              built-in
+            </span>
+          ) : (
+            <Link
+              href={`/integrations/${integration.name}/edit`}
+              className="font-mono text-[10px] uppercase tracking-[0.14em] text-stone-500 hover:text-stone-900 dark:hover:text-stone-100"
+            >
+              edit →
+            </Link>
+          )}
         </div>
-        <p className="max-w-2xl text-[13px] leading-relaxed text-stone-600 dark:text-stone-400">
-          {integration.description}
-        </p>
+        {integration.description && (
+          <p className="max-w-2xl text-[13px] leading-relaxed text-stone-600 dark:text-stone-400">
+            {integration.description}
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
-        {integration.functions.map((fn) => (
-          <FunctionRow
-            key={fn.name}
-            integrationName={integration.name}
-            fn={fn}
-          />
-        ))}
+        {integration.functions.length === 0 ? (
+          <div className="text-[12px] text-stone-500 dark:text-stone-500">
+            No functions yet.{" "}
+            {!integration.builtin && (
+              <Link
+                href={`/integrations/${integration.name}/edit`}
+                className="underline decoration-stone-300 underline-offset-4 hover:text-stone-900 dark:decoration-stone-700 dark:hover:text-stone-100"
+              >
+                Add one
+              </Link>
+            )}
+          </div>
+        ) : (
+          integration.functions.map((fn) => (
+            <FunctionRow
+              key={fn.name}
+              integrationName={integration.name}
+              fn={fn}
+            />
+          ))
+        )}
       </div>
     </li>
   );
@@ -126,7 +207,7 @@ function FunctionRow({
   fn,
 }: {
   integrationName: string;
-  fn: IntegrationJSON["functions"][number];
+  fn: IntegrationCard["functions"][number];
 }) {
   return (
     <details className="group rounded-sm border border-stone-200 dark:border-stone-800">
@@ -144,9 +225,11 @@ function FunctionRow({
         </span>
       </summary>
       <div className="space-y-3 border-t border-stone-100 px-3 py-3 dark:border-stone-800/60">
-        <p className="text-[12.5px] leading-relaxed text-stone-600 dark:text-stone-400">
-          {fn.description}
-        </p>
+        {fn.description && (
+          <p className="text-[12.5px] leading-relaxed text-stone-600 dark:text-stone-400">
+            {fn.description}
+          </p>
+        )}
         {fn.sampleInput !== undefined && (
           <SampleBlock label="Sample input" value={fn.sampleInput} />
         )}
@@ -158,13 +241,7 @@ function FunctionRow({
   );
 }
 
-function SampleBlock({
-  label,
-  value,
-}: {
-  label: string;
-  value: unknown;
-}) {
+function SampleBlock({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="space-y-1">
       <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-stone-500 dark:text-stone-400">
