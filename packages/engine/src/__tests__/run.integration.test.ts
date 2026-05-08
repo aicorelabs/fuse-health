@@ -98,5 +98,17 @@ describe("engine end-to-end: patient-summary workflow", () => {
     for (const id of ["trigger", "getLabs", "getRadiology", "getNotes", "summarize"]) {
       expect(byNodeId[id]?.status, `step ${id}`).toBe("SUCCEEDED");
     }
+
+    // Audit log: run.started and run.succeeded both landed.
+    const audit = await prisma.auditEntry.findMany({
+      where: { resourceType: "run", resourceId: runId },
+      orderBy: { createdAt: "asc" },
+    });
+    const actions = audit.map((a) => a.action);
+    expect(actions).toEqual(["run.started", "run.succeeded"]);
+    const succeeded = audit.find((a) => a.action === "run.succeeded");
+    const meta = succeeded?.metadata as { durationMs: number };
+    expect(typeof meta.durationMs).toBe("number");
+    expect(meta.durationMs).toBeGreaterThanOrEqual(0);
   });
 });

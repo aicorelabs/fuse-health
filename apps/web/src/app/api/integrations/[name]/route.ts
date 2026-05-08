@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { prisma } from "@fuse/db";
+import { writeAudit } from "@fuse/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,6 +80,12 @@ export async function PATCH(
     where: { name },
     data: updates,
   });
+  await writeAudit({
+    action: "integration.updated",
+    resourceType: "integration",
+    resourceId: row.id,
+    metadata: { name, fields: Object.keys(updates) },
+  });
   return NextResponse.json(row);
 }
 
@@ -98,5 +105,11 @@ export async function DELETE(
     );
   }
   await prisma.customIntegration.delete({ where: { name } });
+  await writeAudit({
+    action: "integration.deleted",
+    resourceType: "integration",
+    resourceId: existing.id,
+    metadata: { name },
+  });
   return new NextResponse(null, { status: 204 });
 }

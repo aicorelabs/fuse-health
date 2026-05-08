@@ -6,6 +6,7 @@ import {
   registerBuiltInIntegrations,
 } from "@fuse/connectors";
 import { prisma } from "@fuse/db";
+import { writeAudit } from "@fuse/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -138,6 +139,12 @@ export async function POST(req: Request) {
       baseUrl: parsed.data.baseUrl ?? null,
       defaultHeaders: parsed.data.defaultHeaders as never,
     },
+  });
+  await writeAudit({
+    action: "integration.created",
+    resourceType: "integration",
+    resourceId: created.id,
+    metadata: { name: created.name, label: created.label },
   });
   return NextResponse.json(created, { status: 201 });
 }

@@ -209,6 +209,11 @@ describe("POST /api/workflows", () => {
     expect(body.name).toBe("Created in test");
     expect(body.maxConcurrent).toBe(7);
     createdIds.push(body.id);
+
+    const audit = await prisma.auditEntry.findFirst({
+      where: { action: "workflow.created", resourceId: body.id },
+    });
+    expect(audit).not.toBeNull();
   });
 
   it("400 on body missing name", async () => {
@@ -259,6 +264,15 @@ describe("PATCH /api/workflows/[id]", () => {
     const row = await prisma.workflow.findUnique({ where: { id: updateId } });
     expect(row?.name).toBe("after");
     expect(row?.description).toBe("edited");
+
+    const audit = await prisma.auditEntry.findFirst({
+      where: { action: "workflow.updated", resourceId: updateId },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit).not.toBeNull();
+    expect((audit?.metadata as { fields: string[] }).fields).toEqual(
+      expect.arrayContaining(["name", "description"]),
+    );
   });
 
   it("400 on empty patch body", async () => {
@@ -305,6 +319,11 @@ describe("DELETE /api/workflows/[id]", () => {
 
     const row = await prisma.workflow.findUnique({ where: { id } });
     expect(row).toBeNull();
+
+    const audit = await prisma.auditEntry.findFirst({
+      where: { action: "workflow.deleted", resourceId: id },
+    });
+    expect(audit).not.toBeNull();
   });
 
   it("404 on unknown id", async () => {
@@ -601,9 +620,18 @@ describe("custom integrations CRUD", () => {
       }),
     );
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { name: string; baseUrl: string };
+    const body = (await res.json()) as {
+      id: string;
+      name: string;
+      baseUrl: string;
+    };
     expect(body.name).toBe(slug);
     expect(body.baseUrl).toBe("https://api.example.com");
+
+    const audit = await prisma.auditEntry.findFirst({
+      where: { action: "integration.created", resourceId: body.id },
+    });
+    expect(audit).not.toBeNull();
   });
 
   it("POST /api/integrations rejects invalid slug", async () => {
@@ -691,8 +719,16 @@ describe("custom integrations CRUD", () => {
       { params: Promise.resolve({ name: slug }) },
     );
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { name: string };
+    const body = (await res.json()) as { id: string; name: string };
     expect(body.name).toBe("fetchOne");
+
+    const audit = await prisma.auditEntry.findFirst({
+      where: {
+        action: "integration.function.created",
+        resourceId: body.id,
+      },
+    });
+    expect(audit).not.toBeNull();
   });
 
   it("POST function rejects duplicate names within the same integration", async () => {

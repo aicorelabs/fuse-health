@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { WorkflowGraph } from "@fuse/core";
 import { prisma } from "@fuse/db";
+import { writeAudit } from "@fuse/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -90,6 +91,12 @@ export async function PATCH(
     where: { id },
     data,
   });
+  await writeAudit({
+    action: "workflow.updated",
+    resourceType: "workflow",
+    resourceId: workflow.id,
+    metadata: { fields: Object.keys(data) },
+  });
   return NextResponse.json(workflow);
 }
 
@@ -118,5 +125,10 @@ export async function DELETE(
   }
 
   await prisma.workflow.delete({ where: { id } });
+  await writeAudit({
+    action: "workflow.deleted",
+    resourceType: "workflow",
+    resourceId: id,
+  });
   return new NextResponse(null, { status: 204 });
 }

@@ -2,6 +2,7 @@ import { registerBuiltInIntegrations } from "@fuse/connectors";
 import { WorkflowGraph } from "@fuse/core";
 import { prisma, type RunStatus } from "@fuse/db";
 
+import { writeAudit } from "./audit.js";
 import { executeRun } from "./executor.js";
 import { acquireSlot, releaseSlot } from "./scheduler.js";
 
@@ -32,6 +33,14 @@ export async function startRun(
     },
   });
 
+  await writeAudit({
+    actorType: "engine",
+    action: "run.started",
+    resourceType: "run",
+    resourceId: run.id,
+    metadata: { workflowId: workflow.id, workflowName: workflow.name },
+  });
+
   void runInBackground(run.id, workflow.id, workflow.maxConcurrent);
 
   return { runId: run.id, status: "PENDING" };
@@ -50,6 +59,7 @@ async function runInBackground(
       include: { workflow: { select: { graph: true } } },
     });
 
+    const startedMs = run.startedAt?.getTime() ?? Date.now();
     try {
       // Prefer the run's graphSnapshot (taken at start) over the live workflow.graph,
       // so in-flight runs are unaffected by edits to the workflow.
@@ -57,21 +67,45 @@ async function runInBackground(
       const graph = WorkflowGraph.fromJSON(graphJson);
       const { output } = await executeRun({ run, graph });
 
+      const finishedAt = new Date();
       await prisma.workflowRun.update({
         where: { id: runId },
         data: {
           status: "SUCCEEDED",
           output: output as never,
-          finishedAt: new Date(),
+          finishedAt,
+        },
+      });
+      await writeAudit({
+        actorType: "engine",
+        action: "run.succeeded",
+        resourceType: "run",
+        resourceId: runId,
+        metadata: {
+          workflowId,
+          durationMs: finishedAt.getTime() - startedMs,
         },
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const finishedAt = new Date();
       await prisma.workflowRun.update({
         where: { id: runId },
         data: {
           status: "FAILED",
-          error: err instanceof Error ? err.message : String(err),
-          finishedAt: new Date(),
+          error: message,
+          finishedAt,
+        },
+      });
+      await writeAudit({
+        actorType: "engine",
+        action: "run.failed",
+        resourceType: "run",
+        resourceId: runId,
+        metadata: {
+          workflowId,
+          durationMs: finishedAt.getTime() - startedMs,
+          error: message,
         },
       });
     }

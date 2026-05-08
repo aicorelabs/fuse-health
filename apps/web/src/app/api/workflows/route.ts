@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { WorkflowGraph } from "@fuse/core";
 import { prisma } from "@fuse/db";
+import { writeAudit } from "@fuse/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,6 +65,13 @@ export async function POST(req: Request) {
       graph: parsed.data.graph as never,
       maxConcurrent: parsed.data.maxConcurrent,
     },
+  });
+
+  await writeAudit({
+    action: "workflow.created",
+    resourceType: "workflow",
+    resourceId: workflow.id,
+    metadata: { name: workflow.name },
   });
 
   return NextResponse.json(workflow, { status: 201 });

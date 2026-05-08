@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { Prisma, prisma } from "@fuse/db";
+import { writeAudit } from "@fuse/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -94,6 +95,16 @@ export async function POST(
         parsed.data.sampleOutput === undefined
           ? Prisma.JsonNull
           : (parsed.data.sampleOutput as never),
+    },
+  });
+  await writeAudit({
+    action: "integration.function.created",
+    resourceType: "function",
+    resourceId: created.id,
+    metadata: {
+      integration: name,
+      function: created.name,
+      method: created.method,
     },
   });
   return NextResponse.json(created, { status: 201 });

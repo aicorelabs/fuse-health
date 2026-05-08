@@ -104,3 +104,20 @@ model CustomFunction {
 
   @@unique([integrationId, name])
 }
+
+// Audit log of meaningful actions: workflow CRUD, run lifecycle, integration
+// CRUD. The engine writes from `runInBackground`; route handlers write on
+// CRUD success. Reads power /audit and the workflow Activity panel.
+model AuditEntry {
+  id           String   @id @default(cuid())
+  actorType    String   // "admin" | "system" | "engine"
+  actorId      String?
+  action       String   // e.g. "workflow.created", "run.started"
+  resourceType String   // "workflow" | "run" | "integration" | "function"
+  resourceId   String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([resourceType, resourceId, createdAt])
+  @@index([action, createdAt])
+}
