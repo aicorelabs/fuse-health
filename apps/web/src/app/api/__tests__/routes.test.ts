@@ -32,6 +32,7 @@ import {
   DELETE as deleteCustomFunctionRoute,
   PATCH as patchCustomFunctionRoute,
 } from "../integrations/[name]/functions/[fnName]/route.js";
+import { GET as listAuditRoute } from "../audit/route.js";
 
 const TEST_WORKFLOW_ID = `wf_test_routes_${randomUUID()}`;
 let testRunId = "";
@@ -788,5 +789,124 @@ describe("custom integrations CRUD", () => {
       where: { name: slug },
     });
     expect(row).toBeNull();
+  });
+});
+
+describe("GET /api/audit", () => {
+  const auditScope = `audit_test_${randomUUID().slice(0, 8)}`;
+
+  beforeAll(async () => {
+    // Seed 5 entries for the same resource at increasing timestamps.
+    for (let i = 0; i < 5; i++) {
+      await prisma.auditEntry.create({
+        data: {
+          actorType: "system",
+          action: i === 4 ? "test.last" : "test.event",
+          resourceType: "test-resource",
+          resourceId: auditScope,
+          metadata: { i },
+          createdAt: new Date(Date.now() - (5 - i) * 1000),
+        },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    await prisma.auditEntry.deleteMany({
+      where: { resourceId: auditScope },
+    });
+  });
+
+  it("returns entries newest-first by default", async () => {
+    const res = await listAuditRoute(
+      new Request(
+        `http://localhost/api/audit?resourceType=test-resource&resourceId=${auditScope}`,
+      ),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      entries: Array<{ metadata: { i: number } }>;
+      nextCursor: string | null;
+    };
+    expect(body.entries).toHaveLength(5);
+    // Most recent first → metadata.i descending
+    expect(body.entries.map((e) => e.metadata.i)).toEqual([4, 3, 2, 1, 0]);
+  });
+
+  it("filters by action exactly", async () => {
+    const res = await listAuditRoute(
+      new Request(
+        `http://localhost/api/audit?resourceType=test-resource&resourceId=${auditScope}&action=test.last`,
+      ),
+    );
+    const body = (await res.json()) as {
+      entries: Array<{ action: string }>;
+    };
+    expect(body.entries).toHaveLength(1);
+    expect(body.entries[0]?.action).toBe("test.last");
+  });
+
+  it("paginates via cursor + nextCursor", async () => {
+    const first = await listAuditRoute(
+      new Request(
+        `http://localhost/api/audit?resourceType=test-resource&resourceId=${auditScope}&limit=2`,
+      ),
+    );
+    const firstBody = (await first.json()) as {
+      entries: Array<{ id: string; metadata: { i: number } }>;
+      nextCursor: string | null;
+    };
+    expect(firstBody.entries.map((e) => e.metadata.i)).toEqual([4, 3]);
+    expect(firstBody.nextCursor).toBeTruthy();
+
+    const second = await listAuditRoute(
+      new Request(
+        `http://localhost/api/audit?resourceType=test-resource&resourceId=${auditScope}&limit=2&cursor=${firstBody.nextCursor}`,
+      ),
+    );
+    const secondBody = (await second.json()) as {
+      entries: Array<{ metadata: { i: number } }>;
+      nextCursor: string | null;
+    };
+    expect(secondBody.entries.map((e) => e.metadata.i)).toEqual([2, 1]);
+    expect(secondBody.nextCursor).toBeTruthy();
+
+    const third = await listAuditRoute(
+      new Request(
+        `http://localhost/api/audit?resourceType=test-resource&resourceId=${auditScope}&limit=2&cursor=${secondBody.nextCursor}`,
+      ),
+    );
+    const thirdBody = (await third.json()) as {
+      entries: Array<{ metadata: { i: number } }>;
+      nextCursor: string | null;
+    };
+    expect(thirdBody.entries.map((e) => e.metadata.i)).toEqual([0]);
+    // Last page came back smaller than limit → no further cursor.
+    expect(thirdBody.nextCursor).toBeNull();
+  });
+
+  it("filters by `since` (strictly newer)", async () => {
+    const reference = await prisma.auditEntry.findFirst({
+      where: { resourceId: auditScope },
+      orderBy: { createdAt: "asc" },
+    });
+    const since = reference!.createdAt.toISOString();
+    const res = await listAuditRoute(
+      new Request(
+        `http://localhost/api/audit?resourceType=test-resource&resourceId=${auditScope}&since=${encodeURIComponent(since)}`,
+      ),
+    );
+    const body = (await res.json()) as {
+      entries: Array<{ metadata: { i: number } }>;
+    };
+    // Strictly newer → first seeded (i=0) excluded
+    expect(body.entries.map((e) => e.metadata.i).sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it("400 when `since` is not a valid timestamp", async () => {
+    const res = await listAuditRoute(
+      new Request("http://localhost/api/audit?since=garbage"),
+    );
+    expect(res.status).toBe(400);
   });
 });

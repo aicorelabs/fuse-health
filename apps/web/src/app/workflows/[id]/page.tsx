@@ -28,6 +28,18 @@ export default async function WorkflowDetailPage({
     take: 5,
   });
 
+  const auditEntries = await prisma.auditEntry.findMany({
+    where: {
+      OR: [
+        { resourceType: "workflow", resourceId: id },
+        // Run lifecycle events live under resourceType=run; we'd need to
+        // join via workflowId. Simpler: look up the run ids first.
+      ],
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: 10,
+  });
+
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-10 px-6 py-12">
       <nav>
@@ -98,6 +110,43 @@ export default async function WorkflowDetailPage({
               </li>
             ))}
             <li className="border-t border-stone-100 dark:border-stone-800/60" />
+          </ul>
+        </section>
+      )}
+
+      {auditEntries.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-[10px] font-medium uppercase tracking-[0.18em] text-stone-500 dark:text-stone-400">
+              Activity
+            </h2>
+            <Link
+              href={`/audit?resourceType=workflow&resourceId=${workflow.id}`}
+              className="font-mono text-[10px] uppercase tracking-[0.14em] text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
+            >
+              full log →
+            </Link>
+          </div>
+          <ul className="-mx-2">
+            {auditEntries.map((e, i) => (
+              <li
+                key={e.id}
+                className={`px-2 py-2 ${
+                  i > 0
+                    ? "border-t border-stone-100 dark:border-stone-800/60"
+                    : ""
+                }`}
+              >
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="font-mono text-[12px] text-stone-900 dark:text-stone-100">
+                    {e.action}
+                  </span>
+                  <span className="font-mono text-[10.5px] tabular text-stone-400 dark:text-stone-500">
+                    {e.createdAt.toISOString().replace("T", " ").slice(0, 19)}
+                  </span>
+                </div>
+              </li>
+            ))}
           </ul>
         </section>
       )}
