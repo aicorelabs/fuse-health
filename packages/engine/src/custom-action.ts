@@ -4,6 +4,8 @@ export interface CustomIntegrationConfig {
   name: string;
   baseUrl: string | null;
   defaultHeaders: Record<string, string>;
+  /** Per-integration variables (already decrypted). Exposed as `vars.X` in templates. */
+  vars?: Record<string, string>;
 }
 
 export interface CustomFunctionConfig {
@@ -39,7 +41,11 @@ export async function runCustomAction(
   fn: CustomFunctionConfig,
   input: Record<string, unknown>,
 ): Promise<RunCustomActionResult> {
-  const ctx: TemplateContext = { ...input, env: envSubset() };
+  const ctx: TemplateContext = {
+    ...input,
+    env: envSubset(),
+    vars: integ.vars ?? {},
+  };
 
   const renderedPath = String(renderValue(fn.pathTemplate, ctx));
   const url = isAbsoluteUrl(renderedPath)

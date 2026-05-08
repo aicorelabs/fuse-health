@@ -10,6 +10,7 @@ import {
 import { prisma, type WorkflowRun } from "@fuse/db";
 
 import { isCancelled } from "./cancel.js";
+import { decryptJson } from "./crypto.js";
 import { runCustomAction } from "./custom-action.js";
 import {
   IntegrationNotFoundError,
@@ -238,6 +239,9 @@ async function computeNodeOutput(
           node.functionName,
         );
       }
+      const vars = custom.varsCipher
+        ? (decryptJson(custom.varsCipher) as Record<string, string>)
+        : undefined;
       const result = await withTimeout(
         runCustomAction(
           {
@@ -247,6 +251,7 @@ async function computeNodeOutput(
               string,
               string
             >),
+            ...(vars && { vars }),
           },
           {
             method: customFn.method,

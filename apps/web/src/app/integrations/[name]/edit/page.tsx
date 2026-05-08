@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { prisma } from "@fuse/db";
+import { decryptJson } from "@fuse/engine";
 
 import { FunctionsManager } from "../../_form/FunctionsManager";
 import { IntegrationFormShell } from "../../_form/IntegrationFormShell";
@@ -52,6 +53,9 @@ export default async function EditCustomIntegrationPage({
           category: row.category,
           baseUrl: row.baseUrl ?? "",
           defaultHeaders: (row.defaultHeaders ?? {}) as Record<string, string>,
+          vars: row.varsCipher
+            ? (decryptJson(row.varsCipher) as Record<string, string>)
+            : {},
         }}
       />
 

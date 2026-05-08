@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { prisma } from "@fuse/db";
-import { writeAudit } from "@fuse/engine";
+import { decryptJson, encryptJson, writeAudit } from "@fuse/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +14,8 @@ const updateSchema = z
     category: z.string().min(1).max(50).optional(),
     baseUrl: z.string().url().optional().nullable(),
     defaultHeaders: z.record(z.string()).optional(),
+    /** Per-integration variables. Pass {} to clear; omit to leave unchanged. */
+    vars: z.record(z.string()).optional(),
   })
   .refine((d) => Object.keys(d).length > 0, {
     message: "At least one field is required",
@@ -34,7 +36,15 @@ export async function GET(
       { status: 404 },
     );
   }
-  return NextResponse.json(row);
+  // Decrypt vars for the editor. The catalog list route never includes
+  // vars; this detail endpoint does so the admin can re-edit them.
+  const vars = row.varsCipher
+    ? (decryptJson(row.varsCipher) as Record<string, string>)
+    : {};
+  // Strip the cipher from the response so plaintext vars travel only inside
+  // the response body, not as both fields.
+  const { varsCipher: _drop, ...rest } = row;
+  return NextResponse.json({ ...rest, vars });
 }
 
 export async function PATCH(
@@ -75,6 +85,12 @@ export async function PATCH(
   if (parsed.data.baseUrl !== undefined) updates.baseUrl = parsed.data.baseUrl;
   if (parsed.data.defaultHeaders !== undefined)
     updates.defaultHeaders = parsed.data.defaultHeaders;
+  if (parsed.data.vars !== undefined) {
+    updates.varsCipher =
+      Object.keys(parsed.data.vars).length === 0
+        ? null
+        : encryptJson(parsed.data.vars);
+  }
 
   const row = await prisma.customIntegration.update({
     where: { name },

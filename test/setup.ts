@@ -9,3 +9,7 @@ if (!process.env.GROQ_API_KEY) {
   process.env.GROQ_API_KEY = "test-groq-key";
 }
 
+if (!process.env.FUSE_SECRET_KEY) {
+  process.env.FUSE_SECRET_KEY = "test-fuse-secret-not-for-real-use";
+}
+

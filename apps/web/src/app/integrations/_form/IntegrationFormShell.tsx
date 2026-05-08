@@ -13,6 +13,8 @@ interface ShellValue {
   category: string;
   baseUrl: string;
   defaultHeaders: Record<string, string>;
+  /** Per-integration variables. Encrypted server-side. Reference as `{{ vars.X }}`. */
+  vars: Record<string, string>;
 }
 
 const EMPTY: ShellValue = {
@@ -22,6 +24,7 @@ const EMPTY: ShellValue = {
   category: "custom",
   baseUrl: "",
   defaultHeaders: {},
+  vars: {},
 };
 
 export function IntegrationFormShell({
@@ -54,6 +57,7 @@ export function IntegrationFormShell({
           category: v.category.trim() || "custom",
           baseUrl: v.baseUrl.trim() || null,
           defaultHeaders: v.defaultHeaders,
+          vars: v.vars,
         }),
       });
       const body = (await safeJson(res)) ?? {};
@@ -72,6 +76,7 @@ export function IntegrationFormShell({
         category: v.category.trim() || "custom",
         baseUrl: v.baseUrl.trim() || null,
         defaultHeaders: v.defaultHeaders,
+        vars: v.vars,
       }),
     });
     if (!res.ok) {
@@ -215,13 +220,34 @@ export function IntegrationFormShell({
       </div>
       <FormField
         label="Default headers"
-        hint="Applied to every function. Templates resolve against {{ env.X }} or function input."
+        hint="Applied to every function. Reference {{ vars.X }} (encrypted) or {{ env.X }} (process env)."
       >
         <KeyValueField
           value={v.defaultHeaders}
           onChange={(defaultHeaders) => patch({ defaultHeaders })}
         />
       </FormField>
+
+      <div className="space-y-2 rounded-sm border border-stone-200 bg-stone-50/40 p-3 dark:border-stone-800 dark:bg-stone-900/40">
+        <div className="flex items-baseline justify-between">
+          <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-stone-500 dark:text-stone-400">
+            Variables · encrypted at rest
+          </span>
+          <span className="font-mono text-[10px] text-stone-400 dark:text-stone-500">
+            ref as {"{{ vars.NAME }}"}
+          </span>
+        </div>
+        <p className="text-[11.5px] leading-relaxed text-stone-500 dark:text-stone-500">
+          Per-integration secrets — API keys, tokens, account ids. Stored
+          AES-256-GCM-encrypted in Postgres; resolved into headers, paths,
+          and bodies at call time. Visible to admins on this page only;
+          excluded from the public catalog response.
+        </p>
+        <KeyValueField
+          value={v.vars}
+          onChange={(vars) => patch({ vars })}
+        />
+      </div>
     </section>
   );
 }

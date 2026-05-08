@@ -6,7 +6,7 @@ import {
   registerBuiltInIntegrations,
 } from "@fuse/connectors";
 import { prisma } from "@fuse/db";
-import { writeAudit } from "@fuse/engine";
+import { encryptJson, writeAudit } from "@fuse/engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -93,6 +93,8 @@ const createSchema = z.object({
   category: z.string().min(1).max(50).default("custom"),
   baseUrl: z.string().url().optional().nullable(),
   defaultHeaders: z.record(z.string()).optional().default({}),
+  /** Per-integration variables. Encrypted at rest; resolve as `{{ vars.X }}`. */
+  vars: z.record(z.string()).optional(),
 });
 
 export async function POST(req: Request) {
@@ -138,6 +140,10 @@ export async function POST(req: Request) {
       category: parsed.data.category,
       baseUrl: parsed.data.baseUrl ?? null,
       defaultHeaders: parsed.data.defaultHeaders as never,
+      varsCipher:
+        parsed.data.vars && Object.keys(parsed.data.vars).length > 0
+          ? encryptJson(parsed.data.vars)
+          : null,
     },
   });
   await writeAudit({

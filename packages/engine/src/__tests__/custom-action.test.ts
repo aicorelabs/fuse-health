@@ -215,6 +215,57 @@ describe("runCustomAction", () => {
     ).rejects.toThrow(/labs-real/);
   });
 
+  it("renders {{ vars.X }} from per-integration variables in headers", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    await runCustomAction(
+      {
+        name: "test",
+        baseUrl: "https://api.example.com",
+        defaultHeaders: { Authorization: "Bearer {{ vars.SLACK_TOKEN }}" },
+        vars: { SLACK_TOKEN: "xoxb-actual-secret" },
+      },
+      {
+        method: "GET",
+        pathTemplate: "/x",
+        headers: {},
+        query: {},
+        bodyTemplate: null,
+        timeoutMs: 5000,
+      },
+      {},
+    );
+    const [, init] = fetchMock.mock.calls[0]!;
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer xoxb-actual-secret");
+  });
+
+  it("renders {{ vars.X }} in path, query, and body templates too", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({}));
+    await runCustomAction(
+      {
+        name: "test",
+        baseUrl: "https://api.example.com",
+        defaultHeaders: {},
+        vars: { ACCOUNT_ID: "acct_123" },
+      },
+      {
+        method: "POST",
+        pathTemplate: "/accounts/{{ vars.ACCOUNT_ID }}/items",
+        headers: {},
+        query: { account: "{{ vars.ACCOUNT_ID }}" },
+        bodyTemplate: { account: "{{ vars.ACCOUNT_ID }}", id: "{{ id }}" },
+        timeoutMs: 5000,
+      },
+      { id: "abc" },
+    );
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect((url as URL).pathname).toBe("/accounts/acct_123/items");
+    expect((url as URL).searchParams.get("account")).toBe("acct_123");
+    expect((init as RequestInit).body).toBe(
+      JSON.stringify({ account: "acct_123", id: "abc" }),
+    );
+  });
+
   it("preserves an explicit Content-Type header set on the function", async () => {
     fetchMock.mockResolvedValue(jsonResponse({}));
     await runCustomAction(
