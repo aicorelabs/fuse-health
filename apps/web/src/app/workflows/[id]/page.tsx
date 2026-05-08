@@ -92,9 +92,17 @@ export default async function WorkflowDetailPage({
 
       {recentRuns.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-[10px] font-medium uppercase tracking-[0.18em] text-stone-500 dark:text-stone-400">
-            Recent runs
-          </h2>
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-[10px] font-medium uppercase tracking-[0.18em] text-stone-500 dark:text-stone-400">
+              Recent runs
+            </h2>
+            <Link
+              href={`/runs?workflowId=${workflow.id}`}
+              className="font-mono text-[10px] uppercase tracking-[0.14em] text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
+            >
+              all runs →
+            </Link>
+          </div>
           <ul className="-mx-2">
             {recentRuns.map((run) => (
               <li key={run.id}>

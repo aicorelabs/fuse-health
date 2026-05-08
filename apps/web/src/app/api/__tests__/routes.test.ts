@@ -16,7 +16,7 @@ import {
   PATCH as patchWorkflowById,
 } from "../workflows/[id]/route.js";
 import { GET as getRunById } from "../runs/[id]/route.js";
-import { POST as postRun } from "../runs/route.js";
+import { GET as listRunsRoute, POST as postRun } from "../runs/route.js";
 import { GET as getLastRunOutput } from "../workflows/[id]/last-run-output/route.js";
 import { POST as previewRun } from "../workflows/[id]/preview/route.js";
 import {
@@ -908,5 +908,160 @@ describe("GET /api/audit", () => {
       new Request("http://localhost/api/audit?since=garbage"),
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /api/runs", () => {
+  const wfA = `wf_run_a_${randomUUID()}`;
+  const wfB = `wf_run_b_${randomUUID()}`;
+  const seededIds: string[] = [];
+
+  beforeAll(async () => {
+    await prisma.workflow.create({
+      data: {
+        id: wfA,
+        name: "WF A",
+        graph: MIN_GRAPH as never,
+        maxConcurrent: 5,
+      },
+    });
+    await prisma.workflow.create({
+      data: {
+        id: wfB,
+        name: "WF B",
+        graph: MIN_GRAPH as never,
+        maxConcurrent: 5,
+      },
+    });
+
+    const seeds: Array<{
+      workflowId: string;
+      status: "SUCCEEDED" | "FAILED" | "RUNNING";
+      isPartial?: boolean;
+      createdAt?: Date;
+    }> = [
+      { workflowId: wfA, status: "SUCCEEDED", createdAt: new Date(Date.now() - 5000) },
+      { workflowId: wfA, status: "FAILED", createdAt: new Date(Date.now() - 4000) },
+      { workflowId: wfB, status: "SUCCEEDED", createdAt: new Date(Date.now() - 3000) },
+      { workflowId: wfA, status: "RUNNING", createdAt: new Date(Date.now() - 2000) },
+      // Preview run — must be excluded from the listing.
+      {
+        workflowId: wfA,
+        status: "SUCCEEDED",
+        isPartial: true,
+        createdAt: new Date(Date.now() - 1000),
+      },
+    ];
+    for (const s of seeds) {
+      const row = await prisma.workflowRun.create({
+        data: {
+          workflowId: s.workflowId,
+          status: s.status,
+          input: {} as never,
+          isPartial: s.isPartial ?? false,
+          createdAt: s.createdAt ?? new Date(),
+        },
+      });
+      seededIds.push(row.id);
+    }
+  });
+
+  afterAll(async () => {
+    await prisma.workflowRun.deleteMany({
+      where: { id: { in: seededIds } },
+    });
+    await prisma.workflow.deleteMany({ where: { id: { in: [wfA, wfB] } } });
+  });
+
+  it("returns isPartial=false runs newest-first by default", async () => {
+    const res = await listRunsRoute(new Request("http://localhost/api/runs"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      runs: Array<{ workflowId: string; status: string }>;
+      nextCursor: string | null;
+    };
+    // Filter to our test workflows; partial run must be excluded.
+    const ours = body.runs.filter(
+      (r) => r.workflowId === wfA || r.workflowId === wfB,
+    );
+    expect(ours).toHaveLength(4);
+    // Newest-first
+    expect(ours.map((r) => r.status)).toEqual([
+      "RUNNING",
+      "SUCCEEDED",
+      "FAILED",
+      "SUCCEEDED",
+    ]);
+  });
+
+  it("filters by workflowId", async () => {
+    const res = await listRunsRoute(
+      new Request(`http://localhost/api/runs?workflowId=${wfB}`),
+    );
+    const body = (await res.json()) as {
+      runs: Array<{ workflowId: string }>;
+    };
+    expect(body.runs.every((r) => r.workflowId === wfB)).toBe(true);
+    expect(body.runs).toHaveLength(1);
+  });
+
+  it("filters by repeatable status", async () => {
+    const res = await listRunsRoute(
+      new Request(
+        `http://localhost/api/runs?workflowId=${wfA}&status=FAILED&status=RUNNING`,
+      ),
+    );
+    const body = (await res.json()) as {
+      runs: Array<{ status: string }>;
+    };
+    const statuses = body.runs.map((r) => r.status).sort();
+    expect(statuses).toEqual(["FAILED", "RUNNING"]);
+  });
+
+  it("400 on invalid status", async () => {
+    const res = await listRunsRoute(
+      new Request(`http://localhost/api/runs?status=BOGUS`),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("paginates via cursor + nextCursor", async () => {
+    const first = await listRunsRoute(
+      new Request(`http://localhost/api/runs?workflowId=${wfA}&limit=2`),
+    );
+    const firstBody = (await first.json()) as {
+      runs: Array<{ id: string; status: string }>;
+      nextCursor: string | null;
+    };
+    expect(firstBody.runs.map((r) => r.status)).toEqual(["RUNNING", "FAILED"]);
+    expect(firstBody.nextCursor).toBeTruthy();
+
+    const second = await listRunsRoute(
+      new Request(
+        `http://localhost/api/runs?workflowId=${wfA}&limit=2&cursor=${firstBody.nextCursor}`,
+      ),
+    );
+    const secondBody = (await second.json()) as {
+      runs: Array<{ status: string }>;
+      nextCursor: string | null;
+    };
+    expect(secondBody.runs.map((r) => r.status)).toEqual(["SUCCEEDED"]);
+    expect(secondBody.nextCursor).toBeNull();
+  });
+
+  it("filters by `since` (strictly newer)", async () => {
+    const reference = await prisma.workflowRun.findFirst({
+      where: { id: { in: seededIds } },
+      orderBy: { createdAt: "asc" },
+    });
+    const since = reference!.createdAt.toISOString();
+    const res = await listRunsRoute(
+      new Request(
+        `http://localhost/api/runs?workflowId=${wfA}&since=${encodeURIComponent(since)}`,
+      ),
+    );
+    const body = (await res.json()) as { runs: Array<{ id: string }> };
+    // Excludes the seed at index 0 (oldest).
+    expect(body.runs.map((r) => r.id)).not.toContain(seededIds[0]);
   });
 });
