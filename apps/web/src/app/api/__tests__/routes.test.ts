@@ -16,6 +16,7 @@ import {
   PATCH as patchWorkflowById,
 } from "../workflows/[id]/route.js";
 import { GET as getRunById } from "../runs/[id]/route.js";
+import { POST as cancelRunRoute } from "../runs/[id]/cancel/route.js";
 import { GET as listRunsRoute, POST as postRun } from "../runs/route.js";
 import { GET as getLastRunOutput } from "../workflows/[id]/last-run-output/route.js";
 import { POST as previewRun } from "../workflows/[id]/preview/route.js";
@@ -1063,5 +1064,65 @@ describe("GET /api/runs", () => {
     const body = (await res.json()) as { runs: Array<{ id: string }> };
     // Excludes the seed at index 0 (oldest).
     expect(body.runs.map((r) => r.id)).not.toContain(seededIds[0]);
+  });
+});
+
+describe("POST /api/runs/[id]/cancel", () => {
+  const wf = `wf_cancel_${randomUUID()}`;
+
+  beforeAll(async () => {
+    await prisma.workflow.create({
+      data: {
+        id: wf,
+        name: "WF cancel",
+        graph: MIN_GRAPH as never,
+        maxConcurrent: 5,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.workflowRun.deleteMany({ where: { workflowId: wf } });
+    await prisma.workflow.deleteMany({ where: { id: wf } });
+  });
+
+  it("404 when the run does not exist", async () => {
+    const res = await cancelRunRoute(new Request("http://localhost"), {
+      params: Promise.resolve({ id: "run_does_not_exist_xyz" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("200 when the run is PENDING; marks it CANCELLED", async () => {
+    const row = await prisma.workflowRun.create({
+      data: {
+        workflowId: wf,
+        status: "PENDING",
+        input: {} as never,
+      },
+    });
+    const res = await cancelRunRoute(new Request("http://localhost"), {
+      params: Promise.resolve({ id: row.id }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe("CANCELLED");
+
+    await prisma.auditEntry.deleteMany({ where: { resourceId: row.id } });
+  });
+
+  it("409 when the run is already terminal", async () => {
+    const row = await prisma.workflowRun.create({
+      data: {
+        workflowId: wf,
+        status: "SUCCEEDED",
+        input: {} as never,
+        finishedAt: new Date(),
+      },
+    });
+    const res = await cancelRunRoute(new Request("http://localhost"), {
+      params: Promise.resolve({ id: row.id }),
+    });
+    expect(res.status).toBe(409);
   });
 });

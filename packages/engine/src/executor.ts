@@ -9,10 +9,12 @@ import {
 } from "@fuse/core";
 import { prisma, type WorkflowRun } from "@fuse/db";
 
+import { isCancelled } from "./cancel.js";
 import { runCustomAction } from "./custom-action.js";
 import {
   IntegrationNotFoundError,
   NotImplementedNodeError,
+  RunCancelledError,
   StepFailedError,
   WorkflowStoppedError,
 } from "./errors.js";
@@ -61,6 +63,12 @@ export async function executeRun({ run, graph }: ExecuteArgs): Promise<{
 
   while (true) {
     if (failure) break;
+    // Cooperative cancellation: between batches, bail out if the operator
+    // asked to stop. In-flight node Promises in the previous batch already
+    // settled, but no new batch starts.
+    if (isCancelled(run.id)) {
+      throw new RunCancelledError(run.id);
+    }
     const ready = graph.nodes.filter(isReadyToProcess);
     if (ready.length === 0) break;
 

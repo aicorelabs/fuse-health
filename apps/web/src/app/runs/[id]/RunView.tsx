@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 import { findLLMSummary, isTerminal } from "@/lib/run-utils";
 
@@ -95,11 +95,14 @@ export function RunView({ runId }: { runId: string }) {
       </nav>
 
       <header className="space-y-3 border-b border-stone-200 pb-7 dark:border-stone-800">
-        <div className="flex items-baseline gap-4">
-          <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-stone-500 dark:text-stone-400">
-            Run
+        <div className="flex items-baseline justify-between gap-4">
+          <div className="flex items-baseline gap-4">
+            <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-stone-500 dark:text-stone-400">
+              Run
+            </div>
+            <StatusTag status={run.status} large />
           </div>
-          <StatusTag status={run.status} large />
+          {!isTerminal(run.status) && <CancelButton runId={run.id} />}
         </div>
         <div className="flex items-baseline gap-4 font-mono text-[11px] tabular text-stone-400 dark:text-stone-500">
           <span>{run.id}</span>
@@ -221,6 +224,47 @@ function StepRow({ step }: { step: Step }) {
         </div>
       </details>
     </li>
+  );
+}
+
+function CancelButton({ runId }: { runId: string }) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function onClick() {
+    const ok = window.confirm(
+      "Cancel this run? In-flight steps will finish their current work but no new steps will start.",
+    );
+    if (!ok) return;
+    setError(null);
+    startTransition(async () => {
+      const res = await fetch(`/api/runs/${runId}/cancel`, { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        setError(body.error ?? `HTTP ${res.status}`);
+      }
+      // The polling loop in RunView will pick up the new status on the next tick.
+    });
+  }
+
+  return (
+    <div className="flex items-baseline gap-3">
+      {error && (
+        <span className="font-mono text-[10.5px] text-rose-600 dark:text-rose-400">
+          {error}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={pending}
+        className="rounded-sm border border-stone-200 px-2.5 py-1 text-[11.5px] text-stone-600 transition-colors hover:border-rose-400 hover:text-rose-600 disabled:opacity-50 dark:border-stone-800 dark:text-stone-400"
+      >
+        {pending ? "Cancelling…" : "Cancel"}
+      </button>
+    </div>
   );
 }
 

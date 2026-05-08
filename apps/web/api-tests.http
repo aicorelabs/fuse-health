@@ -255,6 +255,29 @@ DELETE {{host}}/api/integrations/{{customSlug}}/functions/fetchOne
 DELETE {{host}}/api/integrations/{{customSlug}}
 
 ###
+# ─── M2-P3 / P4 / P5 ─────────────────────────────────────────────────────────
+
+# Audit log
+GET {{host}}/api/audit?limit=20
+
+###
+# Audit, filtered to one workflow's events
+GET {{host}}/api/audit?resourceType=workflow&resourceId={{workflowId}}
+
+###
+# Run history
+GET {{host}}/api/runs?limit=20
+
+###
+# Run history filtered to FAILED + RUNNING for one workflow
+GET {{host}}/api/runs?workflowId={{workflowId}}&status=FAILED&status=RUNNING
+
+###
+# Cancel an in-flight run (replace <runId> with a real one)
+# curl -X POST http://localhost:3000/api/runs/<runId>/cancel
+POST {{host}}/api/runs/<runId>/cancel
+
+###
 # Last successful run's input + output — feeds the editor inspector's
 # "Variables in scope" sample panels. 404 if no SUCCEEDED run yet.
 # curl http://localhost:3000/api/workflows/wf_demo_patient_summary/last-run-output

@@ -3,6 +3,8 @@ import { WorkflowGraph } from "@fuse/core";
 import { prisma, type RunStatus } from "@fuse/db";
 
 import { writeAudit } from "./audit.js";
+import { clearCancellationFlag, isCancelled } from "./cancel.js";
+import { RunCancelledError } from "./errors.js";
 import { executeRun } from "./executor.js";
 import { acquireSlot, releaseSlot } from "./scheduler.js";
 
@@ -67,6 +69,12 @@ async function runInBackground(
       const graph = WorkflowGraph.fromJSON(graphJson);
       const { output } = await executeRun({ run, graph });
 
+      // If cancelRun marked the run after the executor finished but before
+      // we get here, respect that — don't overwrite CANCELLED with SUCCEEDED.
+      if (isCancelled(runId)) {
+        return;
+      }
+
       const finishedAt = new Date();
       await prisma.workflowRun.update({
         where: { id: runId },
@@ -87,29 +95,36 @@ async function runInBackground(
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const finishedAt = new Date();
-      await prisma.workflowRun.update({
-        where: { id: runId },
-        data: {
-          status: "FAILED",
-          error: message,
-          finishedAt,
-        },
-      });
-      await writeAudit({
-        actorType: "engine",
-        action: "run.failed",
-        resourceType: "run",
-        resourceId: runId,
-        metadata: {
-          workflowId,
-          durationMs: finishedAt.getTime() - startedMs,
-          error: message,
-        },
-      });
+      // Cancellation is signalled by RunCancelledError; cancelRun() already
+      // wrote the CANCELLED row and the audit entry. Don't overwrite.
+      if (err instanceof RunCancelledError) {
+        // No-op: status was already set to CANCELLED.
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        const finishedAt = new Date();
+        await prisma.workflowRun.update({
+          where: { id: runId },
+          data: {
+            status: "FAILED",
+            error: message,
+            finishedAt,
+          },
+        });
+        await writeAudit({
+          actorType: "engine",
+          action: "run.failed",
+          resourceType: "run",
+          resourceId: runId,
+          metadata: {
+            workflowId,
+            durationMs: finishedAt.getTime() - startedMs,
+            error: message,
+          },
+        });
+      }
     }
   } finally {
+    clearCancellationFlag(runId);
     releaseSlot(workflowId);
   }
 }

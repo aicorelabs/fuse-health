@@ -30,6 +30,15 @@ export class WorkflowStoppedError extends Error {
   }
 }
 
+export class RunCancelledError extends Error {
+  readonly runId: string;
+  constructor(runId: string) {
+    super(`Run ${runId} cancelled`);
+    this.name = "RunCancelledError";
+    this.runId = runId;
+  }
+}
+
 function formatCause(cause: unknown): string {
   if (cause instanceof Error) return cause.message;
   return String(cause);
