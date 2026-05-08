@@ -1,0 +1,315 @@
+# fuse-home API smoke tests
+#
+# Use with: VS Code REST Client extension (humao.rest-client) or
+# import this file into Insomnia (File → Import → REST Client / .http).
+#
+# Equivalents as curl are shown above each request for shell users.
+#
+# Prereqs:
+#   1. `pnpm compose:up`        — Postgres
+#   2. `pnpm db:migrate`        — schema
+#   3. `pnpm db:seed`           — inserts wf_demo_patient_summary
+#   4. `.env` has GROQ_API_KEY  — required for the LLM step
+#   5. `pnpm dev`               — Next.js on :3000
+
+@host = http://localhost:3000
+@workflowId = wf_demo_patient_summary
+
+###
+# List workflows
+# curl http://localhost:3000/api/workflows
+GET {{host}}/api/workflows
+
+###
+# Get the demo workflow
+# curl http://localhost:3000/api/workflows/wf_demo_patient_summary
+GET {{host}}/api/workflows/{{workflowId}}
+
+###
+# Get a workflow that doesn't exist (expect 404)
+# curl -i http://localhost:3000/api/workflows/wf_does_not_exist
+GET {{host}}/api/workflows/wf_does_not_exist
+
+###
+# Start a run (expect 202 with { runId, status: "PENDING" })
+#
+# curl -X POST http://localhost:3000/api/runs \
+#   -H "Content-Type: application/json" \
+#   -d '{"workflowId":"wf_demo_patient_summary","input":{"patientId":"p_001"}}'
+#
+# In REST Client, the @name directive captures the response so the GET below
+# can poll the new run by id.
+# @name createRun
+POST {{host}}/api/runs
+Content-Type: application/json
+
+{
+  "workflowId": "{{workflowId}}",
+  "input": { "patientId": "p_001" }
+}
+
+###
+# Poll the run created above. Re-send this request every 1-2s until
+# `status` is SUCCEEDED or FAILED. The `output.summarize.text` field
+# is the Groq summary.
+#
+# curl http://localhost:3000/api/runs/<runId>
+@runId = {{createRun.response.body.runId}}
+GET {{host}}/api/runs/{{runId}}
+
+###
+# 400 — body missing workflowId
+# curl -i -X POST http://localhost:3000/api/runs \
+#   -H "Content-Type: application/json" \
+#   -d '{"input":{"patientId":"p_001"}}'
+POST {{host}}/api/runs
+Content-Type: application/json
+
+{
+  "input": { "patientId": "p_001" }
+}
+
+###
+# 400 — body is not JSON
+# curl -i -X POST http://localhost:3000/api/runs \
+#   -H "Content-Type: application/json" \
+#   -d 'not-json'
+POST {{host}}/api/runs
+Content-Type: application/json
+
+not-json
+
+###
+# 404 — unknown workflow
+# curl -i -X POST http://localhost:3000/api/runs \
+#   -H "Content-Type: application/json" \
+#   -d '{"workflowId":"wf_does_not_exist","input":{}}'
+POST {{host}}/api/runs
+Content-Type: application/json
+
+{
+  "workflowId": "wf_does_not_exist",
+  "input": {}
+}
+
+###
+# Run page (browser, not REST Client) — useful for the M0 demo
+# open http://localhost:3000/runs/{{runId}}
+
+###
+# ─── M1 editor: workflow CRUD ────────────────────────────────────────────────
+
+###
+# Create a new workflow
+# curl -X POST http://localhost:3000/api/workflows \
+#   -H "Content-Type: application/json" \
+#   -d '{"name":"Smoke","graph":{"nodes":[{"id":"trigger","kind":"trigger.manual","name":"trigger","config":{}}],"edges":[]}}'
+# @name createWorkflow
+POST {{host}}/api/workflows
+Content-Type: application/json
+
+{
+  "name": "Smoke test workflow",
+  "description": "Created via REST Client",
+  "graph": {
+    "nodes": [
+      { "id": "trigger", "kind": "trigger.manual", "name": "Manual trigger", "config": {} }
+    ],
+    "edges": []
+  },
+  "maxConcurrent": 5
+}
+
+###
+@createdId = {{createWorkflow.response.body.id}}
+
+# Update the new workflow's name
+# curl -X PATCH http://localhost:3000/api/workflows/<id> \
+#   -H "Content-Type: application/json" \
+#   -d '{"name":"Smoke test (renamed)"}'
+PATCH {{host}}/api/workflows/{{createdId}}
+Content-Type: application/json
+
+{
+  "name": "Smoke test (renamed)"
+}
+
+###
+# 400 — POST with no name
+# curl -i -X POST http://localhost:3000/api/workflows \
+#   -H "Content-Type: application/json" \
+#   -d '{"graph":{"nodes":[],"edges":[]}}'
+POST {{host}}/api/workflows
+Content-Type: application/json
+
+{
+  "graph": { "nodes": [], "edges": [] }
+}
+
+###
+# 400 — graph fails fromJSON parse
+POST {{host}}/api/workflows
+Content-Type: application/json
+
+{
+  "name": "Bad graph",
+  "graph": {
+    "nodes": [
+      { "id": "x", "kind": "not_a_real_kind", "name": "x", "config": {} }
+    ],
+    "edges": []
+  }
+}
+
+###
+# 400 — empty PATCH body
+PATCH {{host}}/api/workflows/{{createdId}}
+Content-Type: application/json
+
+{}
+
+###
+# 404 — patch unknown id
+PATCH {{host}}/api/workflows/wf_does_not_exist
+Content-Type: application/json
+
+{ "name": "x" }
+
+###
+# Delete the smoke workflow
+# curl -X DELETE http://localhost:3000/api/workflows/<id>
+DELETE {{host}}/api/workflows/{{createdId}}
+
+###
+# 404 — delete unknown id
+DELETE {{host}}/api/workflows/wf_does_not_exist
+
+###
+# Integrations registry — used by /integrations catalog and the editor's
+# action node picker. Returns built-in + custom integrations with their
+# functions and sampleInput/sampleOutput. Each carries `builtin: true|false`.
+# curl http://localhost:3000/api/integrations
+GET {{host}}/api/integrations
+
+###
+# ─── Custom integrations CRUD (M2-P2) ────────────────────────────────────────
+@customSlug = my-test-api
+
+# Create a custom integration
+# @name createCustom
+POST {{host}}/api/integrations
+Content-Type: application/json
+
+{
+  "name": "{{customSlug}}",
+  "label": "My Test API",
+  "description": "User-defined HTTP integration",
+  "category": "custom",
+  "baseUrl": "https://api.example.com",
+  "defaultHeaders": {
+    "Authorization": "Bearer {{ env.MY_API_KEY }}"
+  }
+}
+
+###
+# Update fields
+PATCH {{host}}/api/integrations/{{customSlug}}
+Content-Type: application/json
+
+{ "label": "My Test API (renamed)" }
+
+###
+# 409 — reserved by built-in
+POST {{host}}/api/integrations
+Content-Type: application/json
+
+{ "name": "labs", "label": "Override" }
+
+###
+# Add a function
+POST {{host}}/api/integrations/{{customSlug}}/functions
+Content-Type: application/json
+
+{
+  "name": "fetchOne",
+  "description": "Fetch one record by id",
+  "method": "GET",
+  "pathTemplate": "/v1/things/{{ id }}",
+  "query": { "include": "details" },
+  "sampleInput": { "id": "abc_123" }
+}
+
+###
+# Update a function
+PATCH {{host}}/api/integrations/{{customSlug}}/functions/fetchOne
+Content-Type: application/json
+
+{ "method": "POST", "bodyTemplate": { "id": "{{ id }}" } }
+
+###
+# Delete a function
+DELETE {{host}}/api/integrations/{{customSlug}}/functions/fetchOne
+
+###
+# Delete the integration (cascades to remaining functions)
+DELETE {{host}}/api/integrations/{{customSlug}}
+
+###
+# ─── M2-P3 / P4 / P5 ─────────────────────────────────────────────────────────
+
+# Audit log
+GET {{host}}/api/audit?limit=20
+
+###
+# Audit, filtered to one workflow's events
+GET {{host}}/api/audit?resourceType=workflow&resourceId={{workflowId}}
+
+###
+# Run history
+GET {{host}}/api/runs?limit=20
+
+###
+# Run history filtered to FAILED + RUNNING for one workflow
+GET {{host}}/api/runs?workflowId={{workflowId}}&status=FAILED&status=RUNNING
+
+###
+# Cancel an in-flight run (replace <runId> with a real one)
+# curl -X POST http://localhost:3000/api/runs/<runId>/cancel
+POST {{host}}/api/runs/<runId>/cancel
+
+###
+# Last successful run's input + output — feeds the editor inspector's
+# "Variables in scope" sample panels. 404 if no SUCCEEDED run yet.
+# curl http://localhost:3000/api/workflows/wf_demo_patient_summary/last-run-output
+GET {{host}}/api/workflows/{{workflowId}}/last-run-output
+
+###
+# Preview — run the prefix of an in-flight (possibly unsaved) graph up
+# to and including `targetNodeId`. The graph is supplied in the body.
+# Persists a WorkflowRun with isPartial=true. Used by the editor's
+# "Run up to here" button.
+POST {{host}}/api/workflows/{{workflowId}}/preview
+Content-Type: application/json
+
+{
+  "input": { "patientId": "p_001" },
+  "targetNodeId": "getLabs",
+  "graph": {
+    "nodes": [
+      { "id": "trigger", "kind": "trigger.manual", "name": "Manual trigger", "config": {} },
+      {
+        "id": "getLabs",
+        "kind": "action",
+        "name": "Get labs",
+        "config": {
+          "integration": "labs",
+          "function": "getResults",
+          "input": { "patientId": "{{ trigger.input.patientId }}" }
+        }
+      }
+    ],
+    "edges": [
+      { "id": "e1", "source": "trigger", "target": "getLabs" }
+    ]
+  }
+}

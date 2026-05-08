@@ -1,0 +1,127 @@
+// Fuse-home Prisma schema — v1
+// No User table (env-based admin auth). No Patient table (parameters supplied at trigger).
+// No McpServer table (Fuse-as-MCP-server is v2).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Workflow {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  graph         Json
+  maxConcurrent Int      @default(5)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  runs WorkflowRun[]
+}
+
+model WorkflowRun {
+  id            String    @id @default(cuid())
+  workflowId    String
+  workflow      Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status        RunStatus @default(PENDING)
+  input         Json
+  output        Json?
+  error         String?
+  graphSnapshot Json?
+  isPartial     Boolean   @default(false)
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  steps WorkflowStepRun[]
+
+  @@index([workflowId, createdAt])
+  @@index([workflowId, isPartial, createdAt])
+}
+
+model WorkflowStepRun {
+  id         String      @id @default(cuid())
+  runId      String
+  run        WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  nodeId     String
+  status     RunStatus   @default(PENDING)
+  input      Json?
+  output     Json?
+  error      String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  @@index([runId])
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  SKIPPED
+}
+
+// User-defined integrations. Resolved by the engine when an action node's
+// integration name doesn't match a built-in. Headers, query, and body are
+// templated against the action's input + env vars at call time.
+model CustomIntegration {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  label          String
+  description    String   @default("")
+  category       String   @default("custom")
+  baseUrl        String?
+  defaultHeaders Json     @default("{}")
+  // AES-256-GCM ciphertext of the per-integration `vars` map. Decrypted in
+  // process before calls so plaintext secrets never sit in the DB.
+  // null = no vars set yet.
+  varsCipher     String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  functions CustomFunction[]
+}
+
+model CustomFunction {
+  id            String            @id @default(cuid())
+  integrationId String
+  integration   CustomIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  name          String
+  description   String            @default("")
+  method        String            @default("GET")
+  pathTemplate  String
+  headers       Json              @default("{}")
+  query         Json              @default("{}")
+  bodyTemplate  Json?
+  timeoutMs     Int               @default(50000)
+  sampleInput   Json?
+  sampleOutput  Json?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([integrationId, name])
+}
+
+// Audit log of meaningful actions: workflow CRUD, run lifecycle, integration
+// CRUD. The engine writes from `runInBackground`; route handlers write on
+// CRUD success. Reads power /audit and the workflow Activity panel.
+model AuditEntry {
+  id           String   @id @default(cuid())
+  actorType    String   // "admin" | "system" | "engine"
+  actorId      String?
+  action       String   // e.g. "workflow.created", "run.started"
+  resourceType String   // "workflow" | "run" | "integration" | "function"
+  resourceId   String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([resourceType, resourceId, createdAt])
+  @@index([action, createdAt])
+}
